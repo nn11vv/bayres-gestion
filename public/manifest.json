@@ -1,0 +1,20 @@
+{
+  "name": "Gestión Bayres",
+  "short_name": "Bayres",
+  "start_url": "/gestion",
+  "display": "standalone",
+  "background_color": "#0A1F4E",
+  "theme_color": "#0F2D6B",
+  "icons": [
+    {
+      "src": "/sol-de-mayo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/sol-de-mayo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
