@@ -86,6 +86,7 @@ function fireNotif(title: string, body: string) {
 const NAVY   = "#0F2D6B";
 const NAVY2  = "#0A1F4E";
 const ACCENT = "#1E7FD8";
+const IVA    = 0.21;
 
 const ESTADOS_P: Record<string, { label: string; color: string }> = {
   pendiente: { label: "Pendiente", color: "#D97706" },
@@ -106,6 +107,10 @@ const SERVICIOS = ["Reparación persiana","Instalación persiana","Motorización
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 const fmt     = (d: string) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short" }) : "—";
 const mapsUrl = (dir: string) => `https://maps.google.com/?q=${encodeURIComponent(dir + ", España")}`;
+const calcTotal = (importe: unknown, tieneIva: unknown) => {
+  const base = Number(importe || 0);
+  return tieneIva ? base * (1 + IVA) : base;
+};
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
 const S = {
@@ -125,6 +130,38 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div style={{ marginBottom: 14 }}>
       <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#7AA0D4", marginBottom: 5, letterSpacing: 0.5, textTransform: "uppercase" }}>{label}</label>
       {children}
+    </div>
+  );
+}
+function Toggle({ active, onChange, label }: { active: boolean; onChange: () => void; label: string }) {
+  return (
+    <div onClick={onChange} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0D2259", borderRadius: 10, padding: "12px 14px", marginBottom: 14, border: "1px solid #1A3A7A", cursor: "pointer" }}>
+      <span style={{ color: "#7AA0D4", fontSize: 14, fontWeight: 600 }}>{label}</span>
+      <div style={{ width: 44, height: 24, borderRadius: 12, background: active ? ACCENT : "#2C2C2E", position: "relative", transition: "background 0.2s", border: "1px solid #1A3A7A", flexShrink: 0 }}>
+        <div style={{ position: "absolute", top: 2, left: active ? 20 : 2, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+      </div>
+    </div>
+  );
+}
+function IvaDesglose({ importe, tieneIva }: { importe: unknown; tieneIva: unknown }) {
+  if (!tieneIva || !importe) return null;
+  const base  = Number(importe);
+  const iva   = base * IVA;
+  const total = base + iva;
+  return (
+    <div style={{ background: "#0D2259", borderRadius: 10, padding: "10px 14px", marginBottom: 14, border: "1px solid #1A3A7A" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+        <span style={{ color: "#7AA0D4", fontSize: 13 }}>Base</span>
+        <span style={{ color: "#EEF2FF", fontSize: 13 }}>{base.toFixed(2)}€</span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+        <span style={{ color: "#7AA0D4", fontSize: 13 }}>IVA 21%</span>
+        <span style={{ color: "#EEF2FF", fontSize: 13 }}>{iva.toFixed(2)}€</span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #1A3A7A", paddingTop: 6 }}>
+        <span style={{ color: "#EEF2FF", fontSize: 14, fontWeight: 700 }}>Total</span>
+        <span style={{ color: ACCENT, fontSize: 16, fontWeight: 800 }}>{total.toFixed(2)}€</span>
+      </div>
     </div>
   );
 }
@@ -211,7 +248,7 @@ function PresupuestosTab() {
   const [filter,   setFilter]   = useState("all");
   const [detail,   setDetail]   = useState<Record<string, unknown> | null>(null);
   const [saving,   setSaving]   = useState(false);
-  const blank = { cliente: "", zona: ZONAS[0], direccion: "", servicio: SERVICIOS[0], importe: "", estado: "pendiente", fecha: new Date().toISOString().slice(0,10), nota: "" };
+  const blank = { cliente: "", zona: ZONAS[0], direccion: "", servicio: SERVICIOS[0], importe: "", estado: "pendiente", fecha: new Date().toISOString().slice(0,10), nota: "", tiene_iva: false };
   const [form, setForm] = useState<Record<string, unknown>>(blank);
 
   const load = useCallback(async () => {
@@ -220,7 +257,7 @@ function PresupuestosTab() {
   useEffect(() => { load(); }, [load]);
 
   const filtered  = filter === "all" ? data : data.filter(p => p.estado === filter);
-  const totalAcep = data.filter(p => p.estado==="aceptado").reduce((a, p) => a + Number(p.importe||0), 0);
+  const totalAcep = data.filter(p => p.estado==="aceptado").reduce((a, p) => a + calcTotal(p.importe, p.tiene_iva), 0);
   const nPend     = data.filter(p => p.estado==="pendiente").length;
 
   const openNew  = () => { setEditing(null); setForm(blank); setShowForm(true); };
@@ -245,29 +282,36 @@ function PresupuestosTab() {
     <div>
       {err && <ErrBanner msg={err} onClose={() => setErr(null)} />}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-        <StatCard label="Aceptados"  value={`${totalAcep}€`} color="#059669" />
-        <StatCard label="Pendientes" value={nPend}            color="#D97706" />
+        <StatCard label="Aceptados"  value={`${totalAcep.toFixed(2)}€`} color="#059669" />
+        <StatCard label="Pendientes" value={nPend}                        color="#D97706" />
       </div>
       <FilterPills options={[["all","Todos"], ...Object.entries(ESTADOS_P).map(([k,v]) => [k,v.label] as [string,string])]} active={filter} onChange={setFilter} />
       {loading ? <Spinner /> : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.length === 0 && <Empty />}
-          {filtered.map(p => (
-            <div key={p.id as string} onClick={() => setDetail(p)} style={{ background: "#0A1F4E", border: "1px solid #1A3A7A", borderRadius: 14, padding: 14, cursor: "pointer" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <span style={{ fontWeight: 700, fontSize: 15, color: "#EEF2FF" }}>{p.cliente as string}</span>
-                <span style={{ fontWeight: 800, fontSize: 15, color: ACCENT }}>{p.importe ? `${p.importe}€` : "—"}</span>
+          {filtered.map(p => {
+            const total = calcTotal(p.importe, p.tiene_iva);
+            return (
+              <div key={p.id as string} onClick={() => setDetail(p)} style={{ background: "#0A1F4E", border: "1px solid #1A3A7A", borderRadius: 14, padding: 14, cursor: "pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15, color: "#EEF2FF" }}>{p.cliente as string}</span>
+                  <div style={{ textAlign: "right" }}>
+                    <span style={{ fontWeight: 800, fontSize: 15, color: ACCENT }}>{p.importe ? `${total.toFixed(2)}€` : "—"}</span>
+                    {p.tiene_iva && <span style={{ display: "block", fontSize: 10, color: "#7AA0D4" }}>c/IVA</span>}
+                  </div>
+                </div>
+                <div style={{ fontSize: 13, color: "#7AA0D4", marginBottom: 8 }}>{p.servicio as string} · {p.zona as string}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <Badge estado={p.estado as string} map={ESTADOS_P} />
+                  <span style={{ fontSize: 12, color: "#3A5A9A" }}>{fmt(p.fecha as string)}</span>
+                </div>
               </div>
-              <div style={{ fontSize: 13, color: "#7AA0D4", marginBottom: 8 }}>{p.servicio as string} · {p.zona as string}</div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <Badge estado={p.estado as string} map={ESTADOS_P} />
-                <span style={{ fontSize: 12, color: "#3A5A9A" }}>{fmt(p.fecha as string)}</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       <FAB onClick={openNew} />
+
       {detail && (
         <Modal title="Presupuesto" onClose={() => setDetail(null)}>
           <div style={{ marginBottom: 16 }}>
@@ -276,8 +320,24 @@ function PresupuestosTab() {
           </div>
           <MapsLink direccion={detail.direccion as string} />
           <div style={{ background: "#0D2259", borderRadius: 10, padding: 14, marginBottom: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}><span style={{ color: "#7AA0D4", fontSize: 13 }}>Importe</span><span style={{ color: ACCENT, fontWeight: 800, fontSize: 16 }}>{detail.importe ? `${detail.importe}€` : "—"}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#7AA0D4", fontSize: 13 }}>Fecha</span><span style={{ color: "#EEF2FF", fontSize: 13 }}>{fmt(detail.fecha as string)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ color: "#7AA0D4", fontSize: 13 }}>Base (sin IVA)</span>
+              <span style={{ color: "#EEF2FF", fontSize: 13 }}>{detail.importe ? `${Number(detail.importe).toFixed(2)}€` : "—"}</span>
+            </div>
+            {detail.tiene_iva && detail.importe && <>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <span style={{ color: "#7AA0D4", fontSize: 13 }}>IVA 21%</span>
+                <span style={{ color: "#EEF2FF", fontSize: 13 }}>{(Number(detail.importe) * IVA).toFixed(2)}€</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #1A3A7A", paddingTop: 6, marginTop: 4 }}>
+                <span style={{ color: "#EEF2FF", fontSize: 14, fontWeight: 700 }}>Total con IVA</span>
+                <span style={{ color: ACCENT, fontSize: 16, fontWeight: 800 }}>{(Number(detail.importe) * (1 + IVA)).toFixed(2)}€</span>
+              </div>
+            </>}
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: detail.tiene_iva ? 8 : 0 }}>
+              <span style={{ color: "#7AA0D4", fontSize: 13 }}>Fecha</span>
+              <span style={{ color: "#EEF2FF", fontSize: 13 }}>{fmt(detail.fecha as string)}</span>
+            </div>
           </div>
           {detail.nota && <Note text={detail.nota as string} />}
           <Field label="Cambiar estado">
@@ -293,13 +353,22 @@ function PresupuestosTab() {
           </div>
         </Modal>
       )}
+
       {showForm && (
         <Modal title={editing ? "Editar presupuesto" : "Nuevo presupuesto"} onClose={() => setShowForm(false)}>
           <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre del cliente" /></Field>
           <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e=>setForm({...form,zona:e.target.value})}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></Field>
           <DireccionField value={(form.direccion as string)||""} onChange={v=>setForm({...form,direccion:v})} />
           <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e=>setForm({...form,servicio:e.target.value})}>{SERVICIOS.map(s=><option key={s}>{s}</option>)}</select></Field>
-          <Field label="Importe (€)"><input style={S.input} type="number" value={form.importe as string} onChange={e=>setForm({...form,importe:e.target.value})} placeholder="0" /></Field>
+          <Field label="Importe base (sin IVA)">
+            <input style={S.input} type="number" value={form.importe as string} onChange={e=>setForm({...form,importe:e.target.value})} placeholder="0" />
+          </Field>
+          <Toggle
+            active={!!form.tiene_iva}
+            onChange={() => setForm({...form, tiene_iva: !form.tiene_iva})}
+            label="Aplicar IVA 21%"
+          />
+          <IvaDesglose importe={form.importe} tieneIva={form.tiene_iva} />
           <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e=>setForm({...form,estado:e.target.value})}>{Object.entries(ESTADOS_P).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
           <Field label="Fecha"><input style={S.input} type="date" value={form.fecha as string} onChange={e=>setForm({...form,fecha:e.target.value})} /></Field>
           <Field label="Nota"><textarea style={{...S.input,minHeight:70,resize:"vertical"}} value={form.nota as string} onChange={e=>setForm({...form,nota:e.target.value})} placeholder="Recordatorio, observaciones..." /></Field>
