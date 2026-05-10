@@ -103,10 +103,11 @@ const ESTADOS_T: Record<string, { label: string; color: string }> = {
 };
 const ZONAS     = ["Alicante","Playa San Juan","San Juan Pueblo","Mutxamel","El Campello","Bussot","Benidorm","Jávea","Otra"];
 const SERVICIOS = ["Reparación persiana","Instalación persiana","Motorización persiana","Mosquitera","Aire acondicionado","Electricidad","Otro"];
+const VALID_TABS = ["presupuestos", "materiales", "trabajos"];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-const fmt     = (d: string) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short" }) : "—";
-const mapsUrl = (dir: string) => `https://maps.google.com/?q=${encodeURIComponent(dir + ", España")}`;
+const fmt      = (d: string) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short" }) : "—";
+const mapsUrl  = (dir: string) => `https://maps.google.com/?q=${encodeURIComponent(dir + ", España")}`;
 const calcTotal = (importe: unknown, tieneIva: unknown) => {
   const base = Number(importe || 0);
   return tieneIva ? base * (1 + IVA) : base;
@@ -311,7 +312,6 @@ function PresupuestosTab() {
         </div>
       )}
       <FAB onClick={openNew} />
-
       {detail && (
         <Modal title="Presupuesto" onClose={() => setDetail(null)}>
           <div style={{ marginBottom: 16 }}>
@@ -353,7 +353,6 @@ function PresupuestosTab() {
           </div>
         </Modal>
       )}
-
       {showForm && (
         <Modal title={editing ? "Editar presupuesto" : "Nuevo presupuesto"} onClose={() => setShowForm(false)}>
           <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre del cliente" /></Field>
@@ -363,11 +362,7 @@ function PresupuestosTab() {
           <Field label="Importe base (sin IVA)">
             <input style={S.input} type="number" value={form.importe as string} onChange={e=>setForm({...form,importe:e.target.value})} placeholder="0" />
           </Field>
-          <Toggle
-            active={!!form.tiene_iva}
-            onChange={() => setForm({...form, tiene_iva: !form.tiene_iva})}
-            label="Aplicar IVA 21%"
-          />
+          <Toggle active={!!form.tiene_iva} onChange={() => setForm({...form, tiene_iva: !form.tiene_iva})} label="Aplicar IVA 21%" />
           <IvaDesglose importe={form.importe} tieneIva={form.tiene_iva} />
           <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e=>setForm({...form,estado:e.target.value})}>{Object.entries(ESTADOS_P).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
           <Field label="Fecha"><input style={S.input} type="date" value={form.fecha as string} onChange={e=>setForm({...form,fecha:e.target.value})} /></Field>
@@ -592,6 +587,16 @@ function TrabajosTab() {
 // ─── ROOT ──────────────────────────────────────────────────────────────────────
 export default function GestionApp() {
   const [tab, setTab] = useState("presupuestos");
+
+  // Lee el parámetro ?tab= de la URL al abrir (ej: desde notificación push)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get("tab");
+    if (tabParam && VALID_TABS.includes(tabParam)) {
+      setTab(tabParam);
+    }
+  }, []);
+
   const TABS = [
     { key: "presupuestos", label: "Presupuestos", icon: "📋" },
     { key: "materiales",   label: "Compras",       icon: "🛒" },
