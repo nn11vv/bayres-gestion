@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 // ─── Supabase config ───────────────────────────────────────────────────────────
 const SUPA_URL = "https://tnstmdckdraladewdocf.supabase.co";
 const SUPA_KEY = "sb_publishable_tFyiNQh9qfwnultGIMLq-w_lM_bfL6g";
+const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRuc3RtZGNrZHJhbGFkZXdkb2NmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNzMxNDIsImV4cCI6MjA5Mzc0OTE0Mn0.N8lpUCiRRzzJIfQbuWjPAq5h47HOmYOTNHbrsFxOUc8";
 const headers  = {
   "Content-Type": "application/json",
   "apikey": SUPA_KEY,
@@ -47,7 +48,7 @@ function notificarUrgenteTodos() {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${SUPA_KEY}`,
+      "Authorization": `Bearer ${ANON_KEY}`,
     },
     body: JSON.stringify({}),
   }).catch(console.error);
@@ -418,10 +419,8 @@ function MaterialesTab() {
       await dbUpdate("materiales", id, { [field]: val });
       setData(d => d.map(m => m.id===id ? {...m,[field]:val} : m));
       if (field==="urgente" && val) {
-        // Notificación local al mismo dispositivo
         if (notifOk) fireNotif("⚡ Material urgente — Bayres", `${prev.item as string} marcado como urgente`);
         showBanner(prev.item as string);
-        // Notificación push a TODOS los dispositivos via Edge Function
         notificarUrgenteTodos();
       }
     } catch(e) { setErr((e as Error).message); }
@@ -438,10 +437,8 @@ function MaterialesTab() {
       const u = await dbInsert("materiales", form);
       setData(d => [u, ...d]);
       if (form.urgente) {
-        // Notificación local
         if (notifOk) fireNotif("⚡ Material urgente — Bayres", `${form.item} añadido como urgente`);
         showBanner(form.item);
-        // Notificación push a TODOS los dispositivos via Edge Function
         notificarUrgenteTodos();
       }
       setShowForm(false);
