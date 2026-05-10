@@ -44,13 +44,8 @@ async function dbDelete(table: string, id: string) {
 
 // ─── Notificar a todos via Edge Function ───────────────────────────────────────
 function notificarUrgenteTodos() {
-  fetch(`${SUPA_URL}/functions/v1/notificar-urgentes`, {
+  fetch("/api/notificar", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${ANON_KEY}`,
-    },
-    body: JSON.stringify({}),
   }).catch(console.error);
 }
 
