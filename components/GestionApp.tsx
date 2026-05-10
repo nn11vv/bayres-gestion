@@ -41,7 +41,19 @@ async function dbDelete(table: string, id: string) {
   if (!r.ok) throw new Error(await r.text());
 }
 
-// ─── Push notifications ────────────────────────────────────────────────────────
+// ─── Notificar a todos via Edge Function ───────────────────────────────────────
+function notificarUrgenteTodos() {
+  fetch(`${SUPA_URL}/functions/v1/notificar-urgentes`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${SUPA_KEY}`,
+    },
+    body: JSON.stringify({}),
+  }).catch(console.error);
+}
+
+// ─── Push notifications (local) ───────────────────────────────────────────────
 const VAPID_PUBLIC = "BCH1ymwR0tNamx2WFTPvOzyVE9C4iEDmuwOWzOjOmG2E7FF3aMSbUzvtkCxYqsEqthETWsozk5Na3jteDJGZM-w";
 
 function urlBase64ToUint8Array(base64String: string) {
@@ -101,13 +113,13 @@ const ESTADOS_T: Record<string, { label: string; color: string }> = {
   completado: { label: "Completado", color: "#059669" },
   cancelado:  { label: "Cancelado",  color: "#DC2626" },
 };
-const ZONAS     = ["Alicante","Playa San Juan","San Juan Pueblo","Mutxamel","El Campello","Bussot","Benidorm","Jávea","Otra"];
-const SERVICIOS = ["Reparación persiana","Instalación persiana","Motorización persiana","Mosquitera","Aire acondicionado","Electricidad","Otro"];
+const ZONAS      = ["Alicante","Playa San Juan","San Juan Pueblo","Mutxamel","El Campello","Bussot","Benidorm","Jávea","Otra"];
+const SERVICIOS  = ["Reparación persiana","Instalación persiana","Motorización persiana","Mosquitera","Aire acondicionado","Electricidad","Otro"];
 const VALID_TABS = ["presupuestos", "materiales", "trabajos"];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-const fmt      = (d: string) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short" }) : "—";
-const mapsUrl  = (dir: string) => `https://maps.google.com/?q=${encodeURIComponent(dir + ", España")}`;
+const fmt       = (d: string) => d ? new Date(d + "T12:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "short" }) : "—";
+const mapsUrl   = (dir: string) => `https://maps.google.com/?q=${encodeURIComponent(dir + ", España")}`;
 const calcTotal = (importe: unknown, tieneIva: unknown) => {
   const base = Number(importe || 0);
   return tieneIva ? base * (1 + IVA) : base;
@@ -406,21 +418,32 @@ function MaterialesTab() {
       await dbUpdate("materiales", id, { [field]: val });
       setData(d => d.map(m => m.id===id ? {...m,[field]:val} : m));
       if (field==="urgente" && val) {
+        // Notificación local al mismo dispositivo
         if (notifOk) fireNotif("⚡ Material urgente — Bayres", `${prev.item as string} marcado como urgente`);
         showBanner(prev.item as string);
+        // Notificación push a TODOS los dispositivos via Edge Function
+        notificarUrgenteTodos();
       }
     } catch(e) { setErr((e as Error).message); }
   };
+
   const del = async (id: string) => {
     try { await dbDelete("materiales", id); setData(d => d.filter(m => m.id!==id)); } catch(e) { setErr((e as Error).message); }
   };
+
   const submit = async () => {
     if (!form.item.trim()) return;
     setSaving(true);
     try {
       const u = await dbInsert("materiales", form);
       setData(d => [u, ...d]);
-      if (form.urgente) { if (notifOk) fireNotif("⚡ Material urgente — Bayres", `${form.item} añadido como urgente`); showBanner(form.item); }
+      if (form.urgente) {
+        // Notificación local
+        if (notifOk) fireNotif("⚡ Material urgente — Bayres", `${form.item} añadido como urgente`);
+        showBanner(form.item);
+        // Notificación push a TODOS los dispositivos via Edge Function
+        notificarUrgenteTodos();
+      }
       setShowForm(false);
       setForm({ item: "", cantidad: "", urgente: false, comprado: false, nota: "" });
     } catch(e) { setErr((e as Error).message); } finally { setSaving(false); }
@@ -588,7 +611,6 @@ function TrabajosTab() {
 export default function GestionApp() {
   const [tab, setTab] = useState("presupuestos");
 
-  // Lee el parámetro ?tab= de la URL al abrir (ej: desde notificación push)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab");
