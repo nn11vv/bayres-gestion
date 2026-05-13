@@ -5,7 +5,6 @@ import { useState, useEffect, useCallback } from "react";
 // ─── Supabase config ───────────────────────────────────────────────────────────
 const SUPA_URL = "https://tnstmdckdraladewdocf.supabase.co";
 const SUPA_KEY = "sb_publishable_tFyiNQh9qfwnultGIMLq-w_lM_bfL6g";
-const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRuc3RtZGNrZHJhbGFkZXdkb2NmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNzMxNDIsImV4cCI6MjA5Mzc0OTE0Mn0.N8lpUCiRRzzJIfQbuWjPAq5h47HOmYOTNHbrsFxOUc8";
 const headers  = { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` };
 
 async function dbGet(table: string) {
@@ -15,12 +14,15 @@ async function dbGet(table: string) {
 }
 async function dbInsert(table: string, data: Record<string, unknown>) {
   const { id: _id, ...body } = data; void _id;
-  const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, { method: "POST", headers: { ...headers, "Prefer": "return=representation" }, body: JSON.stringify(body) });
+  // Convertir strings vacíos a null para campos numéricos
+  const clean = Object.fromEntries(Object.entries(body).map(([k, v]) => [k, v === "" ? null : v]));
+  const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, { method: "POST", headers: { ...headers, "Prefer": "return=representation" }, body: JSON.stringify(clean) });
   if (!r.ok) throw new Error(await r.text());
   return (await r.json())[0];
 }
 async function dbUpdate(table: string, id: string, data: Record<string, unknown>) {
-  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}`, { method: "PATCH", headers: { ...headers, "Prefer": "return=representation" }, body: JSON.stringify(data) });
+  const clean = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v === "" ? null : v]));
+  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}`, { method: "PATCH", headers: { ...headers, "Prefer": "return=representation" }, body: JSON.stringify(clean) });
   if (!r.ok) throw new Error(await r.text());
   return (await r.json())[0];
 }
@@ -68,7 +70,7 @@ function fireNotif(title: string, body: string) {
   if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
 }
 
-// ─── Exportar a Excel ──────────────────────────────────────────────────────────
+// ─── Exportar ──────────────────────────────────────────────────────────────────
 async function exportarTodo() {
   const [presupuestos, materiales, trabajos] = await Promise.all([dbGet("presupuestos"), dbGet("materiales"), dbGet("trabajos")]);
   const toCSV = (arr: Record<string, unknown>[]) => {
@@ -83,56 +85,73 @@ async function exportarTodo() {
   URL.revokeObjectURL(url);
 }
 
-// ─── Generar PDF factura ───────────────────────────────────────────────────────
-function generarPDFHtml(factura: Record<string, unknown>): string {
+// ─── Generar factura HTML e imprimir como PDF ──────────────────────────────────
+function generarFacturaHTML(factura: Record<string, unknown>): string {
   const base  = Number(factura.importe || 0);
   const iva   = factura.tieneIva ? base * 0.21 : 0;
   const total = base + iva;
   const titulo = factura.tipo === "PR" ? "Presupuesto" : "Factura";
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${titulo} ${factura.numeroDoc}</title>
-<style>body{font-family:Arial,sans-serif;color:#333;padding:32px;max-width:700px;margin:0 auto}
-.header{border-bottom:3px solid #0F2D6B;padding-bottom:16px;margin-bottom:24px}
-.empresa{font-size:22px;font-weight:bold;color:#0F2D6B}.sub{font-size:12px;color:#666;margin-top:3px}
-.row{display:flex;justify-content:space-between;margin-bottom:24px}
-.doc-tipo{font-size:24px;font-weight:bold;color:#0F2D6B}.doc-num{font-size:13px;color:#888}
-.cbox{background:#f5f7ff;border-radius:8px;padding:16px;margin-bottom:24px}
-.clabel{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
-.cnombre{font-size:16px;font-weight:bold}table{width:100%;border-collapse:collapse;margin-bottom:24px}
-th{background:#0F2D6B;color:white;padding:10px 12px;text-align:left;font-size:13px}
-td{padding:10px 12px;border-bottom:1px solid #eee;font-size:14px}
-.tr{text-align:right}.tfooter{font-size:12px;color:#888;text-align:center;border-top:1px solid #eee;padding-top:16px;margin-top:24px}
-.bold{font-weight:bold;color:#0F2D6B}.btop{border-top:2px solid #0F2D6B!important;padding-top:8px!important}
+  const fechaStr = factura.fecha ? new Date(String(factura.fecha) + "T12:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "long", year: "numeric" }) : "";
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>${titulo} ${factura.numeroDoc}</title>
+<style>
+@media print { body { margin: 0; } .no-print { display: none !important; } }
+body { font-family: Arial, sans-serif; color: #333; padding: 32px; max-width: 700px; margin: 0 auto; }
+.header { border-bottom: 3px solid #0F2D6B; padding-bottom: 16px; margin-bottom: 24px; }
+.empresa { font-size: 22px; font-weight: bold; color: #0F2D6B; }
+.sub { font-size: 12px; color: #666; margin-top: 3px; }
+.row { display: flex; justify-content: space-between; margin-bottom: 24px; }
+.doc-tipo { font-size: 24px; font-weight: bold; color: #0F2D6B; }
+.doc-num { font-size: 13px; color: #888; }
+.cbox { background: #f5f7ff; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+.clabel { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+.cnombre { font-size: 16px; font-weight: bold; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+th { background: #0F2D6B; color: white; padding: 10px 12px; text-align: left; font-size: 13px; }
+td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+.tr { text-align: right; }
+.bold { font-weight: bold; color: #0F2D6B; }
+.btop { border-top: 2px solid #0F2D6B !important; padding-top: 8px !important; }
+.tfooter { font-size: 12px; color: #888; text-align: center; border-top: 1px solid #eee; padding-top: 16px; margin-top: 24px; }
+.print-btn { display: block; margin: 24px auto 0; padding: 12px 32px; background: #0F2D6B; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; }
 </style></head><body>
-<div class="header"><div class="empresa">PERSIANAS BAYRES S.L.</div>
-<div class="sub">NIF: B44820504</div>
-<div class="sub">Carrer de l'Herba Lluisa, 41 planta ch, puerta 6 · Mutxamel, 03110 · Alicante</div></div>
-<div class="row">
-<div><div class="doc-tipo">${titulo}</div><div class="doc-num">${factura.numeroDoc}</div></div>
-<div style="text-align:right"><div style="font-size:13px;color:#666">Fecha</div>
-<div style="font-size:15px;font-weight:bold">${new Date(String(factura.fecha) + "T12:00:00").toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"})}</div></div>
+<div class="header">
+  <div class="empresa">PERSIANAS BAYRES S.L.</div>
+  <div class="sub">NIF: B44820504</div>
+  <div class="sub">Carrer de l'Herba Lluisa, 41 planta ch, puerta 6 · Mutxamel, 03110 · Alicante</div>
 </div>
-<div class="cbox"><div class="clabel">Cliente</div><div class="cnombre">${factura.cliente}</div>
-${factura.direccionCliente ? `<div style="font-size:13px;color:#666;margin-top:4px">${factura.direccionCliente}</div>` : ""}
-${factura.nifCliente ? `<div style="font-size:13px;color:#666">NIF: ${factura.nifCliente}</div>` : '<div style="font-size:13px;color:#888">Contado</div>'}</div>
-<table><thead><tr><th>Descripción</th><th class="tr" style="width:60px">Uds.</th><th class="tr" style="width:90px">P. Unit.</th><th class="tr" style="width:90px">Total</th></tr></thead>
-<tbody><tr><td>${factura.servicio}${factura.descripcion ? `<br><span style="font-size:12px;color:#888">${factura.descripcion}</span>` : ""}</td>
-<td class="tr">1</td><td class="tr">${base.toFixed(2)}€</td><td class="tr">${base.toFixed(2)}€</td></tr></tbody></table>
-<table><tr><td class="tr" style="color:#888;border:none;padding:4px 12px">Subtotal</td><td class="tr" style="border:none;padding:4px 12px;width:100px">${base.toFixed(2)}€</td></tr>
-${factura.tieneIva ? `<tr><td class="tr" style="color:#888;border:none;padding:4px 12px">IVA 21%</td><td class="tr" style="border:none;padding:4px 12px">${iva.toFixed(2)}€</td></tr>` : ""}
-<tr><td class="tr bold btop" style="padding:8px 12px">Total</td><td class="tr bold btop" style="padding:8px 12px">${total.toFixed(2)}€</td></tr></table>
+<div class="row">
+  <div><div class="doc-tipo">${titulo}</div><div class="doc-num">${factura.numeroDoc}</div></div>
+  <div style="text-align:right"><div style="font-size:13px;color:#666">Fecha</div><div style="font-size:15px;font-weight:bold">${fechaStr}</div></div>
+</div>
+<div class="cbox">
+  <div class="clabel">Cliente</div>
+  <div class="cnombre">${factura.cliente}</div>
+  ${factura.direccionCliente ? `<div style="font-size:13px;color:#666;margin-top:4px">${factura.direccionCliente}</div>` : ""}
+  ${factura.nifCliente ? `<div style="font-size:13px;color:#666">NIF: ${factura.nifCliente}</div>` : '<div style="font-size:13px;color:#888">Contado</div>'}
+</div>
+<table>
+  <thead><tr><th>Descripción</th><th class="tr" style="width:60px">Uds.</th><th class="tr" style="width:90px">P. Unit.</th><th class="tr" style="width:90px">Total</th></tr></thead>
+  <tbody><tr>
+    <td>${factura.servicio}${factura.descripcion ? `<br><span style="font-size:12px;color:#888">${factura.descripcion}</span>` : ""}</td>
+    <td class="tr">1</td><td class="tr">${base.toFixed(2)}€</td><td class="tr">${base.toFixed(2)}€</td>
+  </tr></tbody>
+</table>
+<table>
+  <tr><td class="tr" style="color:#888;border:none;padding:4px 12px">Subtotal</td><td class="tr" style="border:none;padding:4px 12px;width:100px">${base.toFixed(2)}€</td></tr>
+  ${factura.tieneIva ? `<tr><td class="tr" style="color:#888;border:none;padding:4px 12px">IVA 21%</td><td class="tr" style="border:none;padding:4px 12px">${iva.toFixed(2)}€</td></tr>` : ""}
+  <tr><td class="tr bold btop" style="padding:8px 12px">Total</td><td class="tr bold btop" style="padding:8px 12px">${total.toFixed(2)}€</td></tr>
+</table>
 <div class="tfooter">Teléfono: 695 26 69 81 · Email: persianasbayres@gmail.com</div>
+<button class="print-btn no-print" onclick="window.print()">📄 Guardar como PDF / Imprimir</button>
 </body></html>`;
 }
 
-function descargarPDF(factura: Record<string, unknown>) {
-  const html  = generarPDFHtml(factura);
-  const blob  = new Blob([html], { type: "text/html;charset=utf-8;" });
-  const url   = URL.createObjectURL(blob);
-  const a     = document.createElement("a");
-  a.href      = url;
-  a.download  = `${factura.numeroDoc}.html`;
-  a.click();
-  URL.revokeObjectURL(url);
+function abrirFacturaPDF(factura: Record<string, unknown>) {
+  const html = generarFacturaHTML(factura);
+  const blob = new Blob([html], { type: "text/html;charset=utf-8;" });
+  const url  = URL.createObjectURL(blob);
+  window.open(url, "_blank");
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -204,9 +223,9 @@ function DireccionField({ value, onChange }: { value: string; onChange: (v: stri
     </Field>
   );
 }
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+function Modal({ title, onClose, children, zIndex = 100 }: { title: string; onClose: () => void; children: React.ReactNode; zIndex?: number }) {
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:100, display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex, display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
       <div style={{ background:"#0A1F4E", borderRadius:"20px 20px 0 0", width:"100%", maxWidth:480, padding:"24px 20px 40px", maxHeight:"90vh", overflowY:"auto" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
           <span style={{ fontWeight:700, fontSize:17, color:"#EEF2FF" }}>{title}</span>
@@ -219,7 +238,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 function ConfirmModal({ msg, onConfirm, onCancel }: { msg: string; onConfirm: () => void; onCancel: () => void }) {
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
       <div style={{ background:"#0A1F4E", borderRadius:16, padding:24, maxWidth:360, width:"100%", border:"1px solid #1A3A7A" }}>
         <div style={{ fontSize:15, color:"#EEF2FF", marginBottom:20, lineHeight:1.5 }}>{msg}</div>
         <div style={{ display:"flex", gap:10 }}>
@@ -261,13 +280,13 @@ function ErrBanner({ msg, onClose }: { msg: string; onClose: ()=>void }) {
   return <div style={{ background:"#7F1D1D", border:"1px solid #DC2626", borderRadius:10, padding:"10px 14px", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}><span style={{ fontSize:13, color:"#FCA5A5" }}>⚠️ {msg}</span><button onClick={onClose} style={{ background:"none", border:"none", color:"#FCA5A5", cursor:"pointer", fontSize:16 }}>✕</button></div>;
 }
 
-// ─── Modal Factura ─────────────────────────────────────────────────────────────
+// ─── Modal Factura — zIndex 200 para estar sobre el modal de detalle ───────────
 function FacturaModal({ registro, tipo, onClose }: { registro: Record<string,unknown>; tipo: "PR"|"FV"; onClose: ()=>void }) {
   const [emailCliente,     setEmailCliente]     = useState(registro.email_cliente as string || "");
   const [direccionCliente, setDireccionCliente] = useState(registro.direccion_cliente as string || registro.direccion as string || "");
   const [nifCliente,       setNifCliente]       = useState(registro.nif_cliente as string || "");
   const [sending,          setSending]          = useState(false);
-  const [done,             setDone]             = useState<"pdf"|"email"|null>(null);
+  const [emailDone,        setEmailDone]        = useState(false);
   const [err,              setErr]              = useState<string|null>(null);
   const [numeroDoc,        setNumeroDoc]        = useState<string>("");
 
@@ -285,20 +304,20 @@ function FacturaModal({ registro, tipo, onClose }: { registro: Record<string,unk
     descripcion: registro.nota, importe: registro.importe, tieneIva: registro.tiene_iva,
   };
 
-  const handlePDF = () => { descargarPDF(factura); setDone("pdf"); };
+  const handlePDF = () => abrirFacturaPDF(factura);
+
   const handleEmail = async () => {
     if (!emailCliente.trim()) { setErr("Ingresá el email del cliente"); return; }
     setSending(true); setErr(null);
     const ok = await enviarFacturaEmail(emailCliente, factura);
     setSending(false);
-    if (ok) setDone("email"); else setErr("Error al enviar. Verificá el email.");
+    if (ok) setEmailDone(true); else setErr("Error al enviar. Verificá el email.");
   };
 
   return (
-    <Modal title="Generar factura" onClose={onClose}>
+    <Modal title="Generar factura" onClose={onClose} zIndex={200}>
       {err && <ErrBanner msg={err} onClose={()=>setErr(null)} />}
-      {done === "pdf"   && <div style={{ background:"#064E3B", border:"1px solid #059669", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#6EE7B7" }}>✅ Archivo descargado — abrilo desde Archivos y compartilo por WhatsApp</div>}
-      {done === "email" && <div style={{ background:"#064E3B", border:"1px solid #059669", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#6EE7B7" }}>✅ Email enviado correctamente</div>}
+      {emailDone && <div style={{ background:"#064E3B", border:"1px solid #059669", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#6EE7B7" }}>✅ Email enviado correctamente</div>}
 
       <div style={{ background:"#0D2259", borderRadius:10, padding:"10px 14px", marginBottom:16, border:"1px solid #1A3A7A" }}>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
@@ -321,9 +340,13 @@ function FacturaModal({ registro, tipo, onClose }: { registro: Record<string,unk
         <input style={S.input} type="email" value={emailCliente} onChange={e=>setEmailCliente(e.target.value)} placeholder="cliente@email.com" />
       </Field>
 
+      <div style={{ background:"#0D2259", borderRadius:10, padding:"10px 14px", marginBottom:14, border:"1px solid #1A3A7A", fontSize:12, color:"#7AA0D4" }}>
+        💡 En iPhone: tocá "Ver PDF" → botón compartir → "Guardar en Archivos" o compartir por WhatsApp
+      </div>
+
       <div style={{ display:"flex", gap:10, marginTop:4 }}>
-        <button onClick={handlePDF} style={{ ...S.btnGhost, flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>📄 Descargar PDF</button>
-        <button onClick={handleEmail} disabled={sending} style={{ ...S.btnPrim, flex:1, opacity:sending?0.7:1 }}>{sending?"Enviando...":"📧 Enviar email"}</button>
+        <button onClick={handlePDF} style={{ ...S.btnGhost, flex:1 }}>📄 Ver PDF</button>
+        <button onClick={handleEmail} disabled={sending} style={{ ...S.btnPrim, flex:1, opacity:sending?0.7:1 }}>{sending?"Enviando...":"📧 Email"}</button>
       </div>
     </Modal>
   );
@@ -371,17 +394,14 @@ function PresupuestosTab({ onCrearTrabajo }: { onCrearTrabajo: (p: Record<string
       await dbUpdate("presupuestos",id,{estado});
       setData(d=>d.map(p=>p.id===id?{...p,estado}:p));
       setDetail(d=>d?{...d,estado}:null);
-      if (estado==="aceptado") {
-        const pres = data.find(p=>p.id===id);
-        if (pres) setConfirmTrabajo({...pres,estado:"aceptado"});
-      }
+      if (estado==="aceptado") { const pres = data.find(p=>p.id===id); if (pres) setConfirmTrabajo({...pres,estado:"aceptado"}); }
     } catch(e) { setErr((e as Error).message); }
   };
 
   return (
     <div>
       {err && <ErrBanner msg={err} onClose={()=>setErr(null)} />}
-      {confirmDel && <ConfirmModal msg="¿Eliminar este presupuesto? Esta acción no se puede deshacer." onConfirm={()=>del(confirmDel)} onCancel={()=>setConfirmDel(null)} />}
+      {confirmDel && <ConfirmModal msg="¿Eliminar este presupuesto?" onConfirm={()=>del(confirmDel)} onCancel={()=>setConfirmDel(null)} />}
       {confirmTrabajo && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
           <div style={{ background:"#0A1F4E", borderRadius:16, padding:24, maxWidth:360, width:"100%", border:"1px solid #1A3A7A" }}>
@@ -582,12 +602,10 @@ function TrabajosTab({ precargar }: { precargar: Record<string,unknown>|null }) 
   const load = useCallback(async () => { try { setLoading(true); setData(await dbGet("trabajos")); } catch(e) { setErr((e as Error).message); } finally { setLoading(false); } }, []);
   useEffect(() => { load(); }, [load]);
 
-  // Precargar desde presupuesto aceptado
   useEffect(() => {
     if (!precargar) return;
-    setForm({ ...blank, cliente: precargar.cliente, zona: precargar.zona, direccion: precargar.direccion||"", servicio: precargar.servicio, nota: precargar.nota||"", email_cliente: precargar.email_cliente||"", });
-    setEditing(null);
-    setShowForm(true);
+    setForm({ ...blank, cliente:precargar.cliente, zona:precargar.zona, direccion:precargar.direccion||"", servicio:precargar.servicio, nota:precargar.nota||"", email_cliente:precargar.email_cliente||"" });
+    setEditing(null); setShowForm(true);
   }, [precargar]);
 
   const filtered = filter==="all" ? data : data.filter(t=>t.estado===filter);
@@ -612,7 +630,7 @@ function TrabajosTab({ precargar }: { precargar: Record<string,unknown>|null }) 
   return (
     <div>
       {err && <ErrBanner msg={err} onClose={()=>setErr(null)} />}
-      {confirmDel && <ConfirmModal msg="¿Eliminar este trabajo? Esta acción no se puede deshacer." onConfirm={()=>del(confirmDel)} onCancel={()=>setConfirmDel(null)} />}
+      {confirmDel && <ConfirmModal msg="¿Eliminar este trabajo?" onConfirm={()=>del(confirmDel)} onCancel={()=>setConfirmDel(null)} />}
       {showFactura && <FacturaModal registro={showFactura} tipo="FV" onClose={()=>setShowFactura(null)} />}
       <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16 }}>
         <StatCard label="En curso" value={enCurso} color={ACCENT} />
@@ -643,7 +661,7 @@ function TrabajosTab({ precargar }: { precargar: Record<string,unknown>|null }) 
         <Modal title="Trabajo" onClose={()=>setDetail(null)}>
           <div style={{ marginBottom:16 }}>
             <div style={{ fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4 }}>{detail.cliente as string}</div>
-            <div style={{ fontSize:14,color:"#7AA0D4" }}>{detail.servicio as string} · {detail.zona as string} · {fmt(detail.fecha as string)}{detail.hora_inicio ? ` · 🕐 ${detail.hora_inicio as string}` : ""}</div>
+            <div style={{ fontSize:14,color:"#7AA0D4" }}>{detail.servicio as string} · {detail.zona as string} · {fmt(detail.fecha as string)}{detail.hora_inicio?` · 🕐 ${detail.hora_inicio as string}`:""}</div>
           </div>
           <MapsLink direccion={detail.direccion as string} />
           {detail.nota&&<Note text={detail.nota as string} />}
@@ -690,10 +708,7 @@ export default function GestionApp() {
     if (t && VALID_TABS.includes(t)) setTab(t);
   }, []);
 
-  const handleCrearTrabajo = (p: Record<string,unknown>) => {
-    setTrabajoPrecar(p);
-    setTab("trabajos");
-  };
+  const handleCrearTrabajo = (p: Record<string,unknown>) => { setTrabajoPrecar(p); setTab("trabajos"); };
 
   const TABS = [
     { key:"presupuestos", label:"Presupuestos", icon:"📋" },
@@ -711,7 +726,7 @@ export default function GestionApp() {
             <div style={{ fontSize:10, color:"#7AA0D4", fontWeight:700, letterSpacing:2, textTransform:"uppercase", lineHeight:1 }}>Bayres Servicios</div>
             <div style={{ fontSize:20, fontWeight:800, color:"#EEF2FF", lineHeight:1.3 }}>Gestión</div>
           </div>
-          <button onClick={exportarTodo} style={{ background:"#0D2259", border:"1px solid #1A3A7A", borderRadius:8, color:"#7AA0D4", padding:"6px 10px", cursor:"pointer", fontSize:13, fontWeight:600 }}>⬇️ Export</button>
+          
         </div>
       </div>
       <div style={{ padding:"16px 16px 0" }}>
