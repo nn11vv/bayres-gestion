@@ -146,12 +146,23 @@ td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
 </body></html>`;
 }
 
-function abrirFacturaPDF(factura: Record<string, unknown>) {
-  const html = generarFacturaHTML(factura);
-  const blob = new Blob([html], { type: "text/html;charset=utf-8;" });
-  const url  = URL.createObjectURL(blob);
-  window.open(url, "_blank");
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
+async function abrirFacturaPDF(factura: Record<string, unknown>) {
+  const html2pdf = (await import("html2pdf.js")).default;
+  const html     = generarFacturaHTML(factura);
+  const el       = document.createElement("div");
+  el.innerHTML   = html;
+  document.body.appendChild(el);
+  await html2pdf()
+    .set({
+      margin:      [10, 10, 10, 10],
+      filename:    `${factura.numeroDoc}.pdf`,
+      image:       { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF:       { unit: "mm", format: "a4", orientation: "portrait" },
+    })
+    .from(el)
+    .save();
+  document.body.removeChild(el);
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
