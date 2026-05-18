@@ -128,15 +128,34 @@ const S = {
 
 // ─── SPLASH SCREEN ─────────────────────────────────────────────────────────────
 function SplashScreen({ onDone }: { onDone: () => void }) {
-  const [phase, setPhase] = useState<"in"|"hold"|"out">("in");
+  const [phase, setPhase] = useState<"idle" | "animating" | "hold" | "out">("idle");
   const LAMAS = 8;
 
   useEffect(() => {
-    const t1 = setTimeout(() => setPhase("hold"), 1800);
-    const t2 = setTimeout(() => setPhase("out"),  2400);
-    const t3 = setTimeout(() => onDone(),          3000);
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+    let raf1 = 0;
+    let raf2 = 0;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    // Primer render: idle, sin transición.
+    // Dos frames después: animating, para que el DOM ya haya pintado el estado inicial.
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        setPhase("animating");
+
+        timers.push(setTimeout(() => setPhase("hold"), 1600));
+        timers.push(setTimeout(() => setPhase("out"), 2200));
+        timers.push(setTimeout(() => onDone(), 2800));
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      timers.forEach(clearTimeout);
+    };
   }, [onDone]);
+
+  const isInitial = phase === "idle";
 
   return (
     <div style={{
@@ -147,7 +166,19 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
     }}>
       {/* Sol de Mayo */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/sol-de-mayo.png" alt="" style={{ width:90, height:90, objectFit:"contain", marginBottom:32, opacity: phase==="in" ? 0 : 1, transform: phase==="in" ? "scale(0.7)" : "scale(1)", transition:"opacity 0.5s ease, transform 0.5s ease" }} />
+      <img
+        src="/sol-de-mayo.png"
+        alt=""
+        style={{
+          width:90,
+          height:90,
+          objectFit:"contain",
+          marginBottom:32,
+          opacity: isInitial ? 0 : 1,
+          transform: isInitial ? "scale(0.7)" : "scale(1)",
+          transition: isInitial ? "none" : "opacity 0.5s ease, transform 0.5s ease",
+        }}
+      />
 
       {/* Persiana animada SVG */}
       <div style={{ width:180, height:140, position:"relative", overflow:"hidden", border:"2px solid rgba(255,255,255,0.15)", borderRadius:4 }}>
@@ -161,10 +192,10 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
           return (
             <div key={i} style={{
               position:"absolute", left:0, right:0, height:lamaH,
-              bottom: phase==="in" ? -lamaH : bottom,
+              bottom: isInitial ? -lamaH : bottom,
               background: i%2===0 ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.10)",
               borderBottom:"1px solid rgba(255,255,255,0.08)",
-              transition: phase==="in" ? `bottom 0.4s ease ${delay}ms` : "none",
+              transition: isInitial ? "none" : `bottom 0.4s ease ${delay}ms`,
             }} />
           );
         })}
@@ -172,7 +203,17 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
 
       {/* Logo Bayres */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/logo-bayres.png" alt="Persianas Bayres" style={{ width:160, marginTop:28, opacity: phase==="in" ? 0 : 1, transition:"opacity 0.5s ease 0.8s", filter:"brightness(0) invert(1)" }} />
+      <img
+        src="/logo-bayres.png"
+        alt="Persianas Bayres"
+        style={{
+          width:160,
+          marginTop:28,
+          opacity: isInitial ? 0 : 1,
+          transition: isInitial ? "none" : "opacity 0.5s ease 0.8s",
+          borderRadius:8,
+        }}
+      />
     </div>
   );
 }
@@ -561,7 +602,7 @@ export default function GestionApp() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/sol-de-mayo.png" alt="" style={{width:40,height:40,objectFit:"contain",flexShrink:0}}/>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-bayres.png" alt="Persianas Bayres" style={{height:28,objectFit:"contain",filter:"brightness(0) invert(1)",flex:1,maxWidth:160}}/>
+            <img src="/logo-bayres.png" alt="Persianas Bayres" style={{height:28,objectFit:"contain",flex:1,maxWidth:160,borderRadius:4}}/>
             <div style={{background:"#0D2259",borderRadius:10,padding:"6px 10px",fontSize:11,color:"#7AA0D4",fontWeight:600,border:"1px solid #1A3A7A",whiteSpace:"nowrap"}}>
               {new Date().toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"})}
             </div>
