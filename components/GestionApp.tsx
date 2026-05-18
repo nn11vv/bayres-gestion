@@ -208,7 +208,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
       {/* Logo Bayres */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/logo-bayres.png.png"
+        src="/logo-bayres.png"
         alt="Persianas Bayres"
         style={{
           width:160,
@@ -600,18 +600,16 @@ export default function GestionApp() {
   return (
     <>
       {!splashDone && <SplashScreen onDone={()=>setSplashDone(true)} />}
-      <div style={{background:NAVY2,minHeight:"100vh",fontFamily:"system-ui,sans-serif",color:"#EEF2FF",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
+      <div style={{background:NAVY2,minHeight:"100vh",fontFamily:"var(--font-plus-jakarta), system-ui, sans-serif",color:"#EEF2FF",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
         <div style={{background:NAVY,padding:"14px 20px 12px",borderBottom:"1px solid #1A3A7A",position:"sticky",top:0,zIndex:40}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/sol-de-mayo.png" alt="" style={{width:40,height:40,objectFit:"contain",flexShrink:0}}/>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-bayres.png" alt="Persianas Bayres" style={{height:28,objectFit:"contain",flex:1,maxWidth:160,borderRadius:4}}/>
+            <div style={{flex:1,fontSize:20,fontWeight:800,color:"#EEF2FF",letterSpacing:0}}>Gestion Bayres</div>
             <div style={{background:"#0D2259",borderRadius:10,padding:"6px 10px",fontSize:11,color:"#7AA0D4",fontWeight:600,border:"1px solid #1A3A7A",whiteSpace:"nowrap"}}>
               {new Date().toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"})}
             </div>
           </div>
-          <div style={{fontSize:13,fontWeight:700,color:"#EEF2FF",marginTop:4,paddingLeft:52}}>Gestión</div>
         </div>
         <div style={{padding:"16px 16px 0"}}>
           {tab==="presupuestos"&&<PresupuestosTab onCrearTrabajo={p=>{setTrabajoPrecar(p);setTab("trabajos");}}/>}
