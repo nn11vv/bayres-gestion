@@ -432,8 +432,11 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
       {filtered.length===0&&<Empty/>}
       {filtered.map(p=>(
         <div key={p.id as string} onClick={()=>setDetail(p)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer"}}>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-            <span style={{fontWeight:700,fontSize:15,color:"#EEF2FF"}}>{p.cliente as string}</span>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:6}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#EEF2FF"}}>{p.cliente as string}</div>
+              {p.direccion&&<div style={{fontSize:12,color:"#7AA0D4",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.direccion as string}</div>}
+            </div>
             <div style={{textAlign:"right"}}><span style={{fontWeight:800,fontSize:15,color:ACCENT}}>{p.importe?`${Number(p.importe).toFixed(2)}€`:"—"}</span>{p.tiene_iva&&<span style={{display:"block",fontSize:10,color:"#7AA0D4"}}>c/IVA</span>}</div>
           </div>
           <div style={{fontSize:13,color:"#7AA0D4",marginBottom:8}}>{p.servicio as string} · {p.zona as string}</div>
