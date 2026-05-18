@@ -118,6 +118,8 @@ const ITEM_BLANK: Item = { descripcion:"", cantidad:1, precio_unitario:0, orden:
 const fmt       = (d: string) => d ? new Date(d+"T12:00:00").toLocaleDateString("es-ES",{day:"2-digit",month:"short"}) : "—";
 const mapsUrl   = (dir: string) => `https://maps.google.com/?q=${encodeURIComponent(dir+", España")}`;
 const calcTotalItems = (items: Item[]) => items.reduce((a,i)=>a+i.cantidad*i.precio_unitario,0);
+const monthKey  = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+const monthName = (m: string) => new Date(`${m}-01T12:00:00`).toLocaleDateString("es-ES",{month:"long",year:"numeric"});
 
 const S = {
   input:    {width:"100%",background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,color:"#EEF2FF",padding:"10px 12px",fontSize:15,boxSizing:"border-box" as const,fontFamily:"inherit",outline:"none"},
@@ -347,6 +349,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const [showFactura,setShowFactura]=useState<Record<string,unknown>|null>(null);
   const [facturaItems,setFacturaItems]=useState<Item[]>([]);
   const [items,setItems]=useState<Item[]>([{...ITEM_BLANK}]);
+  const [reportMonth,setReportMonth]=useState(monthKey());
   const blank={cliente:"",zona:ZONAS[0],direccion:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",tiene_iva:false,email_cliente:"",direccion_cliente:"",nif_cliente:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
 
@@ -354,8 +357,16 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   useEffect(()=>{load();},[load]);
 
   const filtered=filter==="all"?data:data.filter(p=>p.estado===filter);
-  const totalAcep=data.filter(p=>p.estado==="aceptado").reduce((a,p)=>a+Number(p.importe||0),0);
-  const nPend=data.filter(p=>p.estado==="pendiente").length;
+  const inReportMonth=(value: unknown) => typeof value==="string" && value.slice(0,7)===reportMonth;
+  const acceptedMonth=data.filter(p=>p.estado==="aceptado"&&inReportMonth(p.aceptado_at||p.estado_updated_at||p.fecha));
+  const rejectedMonth=data.filter(p=>p.estado==="rechazado"&&inReportMonth(p.rechazado_at||p.estado_updated_at||p.fecha));
+  const pendingMonth=data.filter(p=>p.estado==="pendiente"&&inReportMonth(p.fecha||p.created_at));
+  const createdMonth=data.filter(p=>inReportMonth(p.fecha||p.created_at));
+  const acceptedTotal=acceptedMonth.reduce((a,p)=>a+Number(p.importe||0),0);
+  const rejectedTotal=rejectedMonth.reduce((a,p)=>a+Number(p.importe||0),0);
+  const pendingTotal=pendingMonth.reduce((a,p)=>a+Number(p.importe||0),0);
+  const decidedMonth=acceptedMonth.length+rejectedMonth.length;
+  const acceptanceRate=decidedMonth?Math.round((acceptedMonth.length/decidedMonth)*100):0;
 
   const openNew=()=>{setEditing(null);setForm(blank);setItems([{...ITEM_BLANK}]);setShowForm(true);};
   const openEdit=async(p:Record<string,unknown>)=>{
@@ -378,8 +389,12 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   };
   const del=async(id:string)=>{try{await dbDelete("presupuestos",id);setData(d=>d.filter(p=>p.id!==id));setDetail(null);setConfirmDel(null);}catch(e){setErr((e as Error).message);}};
   const changeEstado=async(id:string,estado:string)=>{
-    try{await dbUpdate("presupuestos",id,{estado});setData(d=>d.map(p=>p.id===id?{...p,estado}:p));setDetail(d=>d?{...d,estado}:null);
-    if(estado==="aceptado"){const pres=data.find(p=>p.id===id);if(pres)setConfirmTrabajo({...pres,estado:"aceptado"});}}catch(e){setErr((e as Error).message);}
+    const now=new Date().toISOString();
+    const update:Record<string,unknown>={estado,estado_updated_at:now};
+    if(estado==="aceptado")update.aceptado_at=now;
+    if(estado==="rechazado")update.rechazado_at=now;
+    try{const updated=await dbUpdate("presupuestos",id,update);setData(d=>d.map(p=>p.id===id?updated:p));setDetail(d=>d?{...d,...updated}:null);
+    if(estado==="aceptado"){const pres=data.find(p=>p.id===id);if(pres)setConfirmTrabajo({...pres,...updated});}}catch(e){setErr((e as Error).message);}
   };
   const abrirFactura=async(p:Record<string,unknown>)=>{
     try{const pi=await dbGet("presupuesto_items",`&presupuesto_id=eq.${p.id}&order=orden.asc`);setFacturaItems(pi);}catch{setFacturaItems([]);}
@@ -391,9 +406,26 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     {confirmDel&&<ConfirmModal msg="¿Eliminar este presupuesto?" onConfirm={()=>del(confirmDel)} onCancel={()=>setConfirmDel(null)}/>}
     {confirmTrabajo&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}><div style={{background:"#0A1F4E",borderRadius:16,padding:24,maxWidth:360,width:"100%",border:"1px solid #1A3A7A"}}><div style={{fontSize:15,color:"#EEF2FF",marginBottom:8,fontWeight:700}}>✅ Presupuesto aceptado</div><div style={{fontSize:14,color:"#7AA0D4",marginBottom:20}}>¿Crear un trabajo a partir de este presupuesto?</div><div style={{display:"flex",gap:10}}><button onClick={()=>setConfirmTrabajo(null)} style={{...S.btnGhost,flex:1}}>No por ahora</button><button onClick={()=>{onCrearTrabajo(confirmTrabajo!);setConfirmTrabajo(null);setDetail(null);}} style={{...S.btnPrim,flex:1}}>Crear trabajo</button></div></div></div>}
     {showFactura&&<FacturaModal registro={showFactura} tipo="PR" items={facturaItems} onClose={()=>setShowFactura(null)}/>}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-      <StatCard label="Aceptados" value={`${totalAcep.toFixed(2)}€`} color="#059669"/>
-      <StatCard label="Pendientes" value={nPend} color="#D97706"/>
+    <div style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:12}}>
+        <div>
+          <div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"}}>Reporte</div>
+          <div style={{fontSize:17,color:"#EEF2FF",fontWeight:800}}>{monthName(reportMonth)}</div>
+        </div>
+        <input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{...S.input,width:138,fontSize:12,padding:"7px 8px"}}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+        <StatCard label="Aceptados" value={acceptedMonth.length} color="#059669"/>
+        <StatCard label="Rechazados" value={rejectedMonth.length} color="#DC2626"/>
+        <StatCard label="Pendientes" value={pendingMonth.length} color="#D97706"/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>Aceptado</div><div style={{fontSize:18,color:"#059669",fontWeight:800}}>{acceptedTotal.toFixed(2)}€</div></div>
+        <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>En juego</div><div style={{fontSize:18,color:"#D97706",fontWeight:800}}>{pendingTotal.toFixed(2)}€</div></div>
+        <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>Desestimado</div><div style={{fontSize:18,color:"#DC2626",fontWeight:800}}>{rejectedTotal.toFixed(2)}€</div></div>
+        <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>Conversión</div><div style={{fontSize:18,color:ACCENT,fontWeight:800}}>{decidedMonth?`${acceptanceRate}%`:"—"}</div></div>
+      </div>
+      <div style={{fontSize:12,color:"#7AA0D4",marginTop:10}}>Creados en el mes: <strong style={{color:"#EEF2FF"}}>{createdMonth.length}</strong></div>
     </div>
     <FilterPills options={[["all","Todos"],...Object.entries(ESTADOS_P).map(([k,v])=>[k,v.label] as [string,string])]} active={filter} onChange={setFilter}/>
     {loading?<Spinner/>:<div style={{display:"flex",flexDirection:"column",gap:8}}>
