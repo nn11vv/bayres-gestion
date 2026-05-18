@@ -187,15 +187,19 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
         {/* Lamas que suben */}
         {Array.from({length:LAMAS}).map((_,i) => {
           const lamaH = 16;
-          const delay  = i * 120;
-          const bottom = i * lamaH;
+          const delay  = (LAMAS - 1 - i) * 120;
+          const top = 10 + i * lamaH;
+          const rollTop = -lamaH * (LAMAS - i);
           return (
             <div key={i} style={{
               position:"absolute", left:0, right:0, height:lamaH,
-              bottom: isInitial ? -lamaH : bottom,
+              top: isInitial ? top : rollTop,
               background: i%2===0 ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.10)",
               borderBottom:"1px solid rgba(255,255,255,0.08)",
-              transition: isInitial ? "none" : `bottom 0.4s ease ${delay}ms`,
+              opacity: isInitial ? 1 : 0,
+              transform: isInitial ? "scaleY(1)" : "scaleY(0.35)",
+              transformOrigin: "top center",
+              transition: isInitial ? "none" : `top 0.55s ease ${delay}ms, opacity 0.35s ease ${delay + 120}ms, transform 0.45s ease ${delay}ms`,
             }} />
           );
         })}
@@ -204,7 +208,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
       {/* Logo Bayres */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/logo-bayres.png"
+        src="/logo-bayres.png.png"
         alt="Persianas Bayres"
         style={{
           width:160,
