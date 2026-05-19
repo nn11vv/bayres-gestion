@@ -73,28 +73,74 @@ function fireNotif(title: string, body: string) {
 function generarFacturaHTML(factura: Record<string, unknown>, items: Item[]): string {
   const titulo   = factura.tipo === "PR" ? "Presupuesto" : "Factura";
   const fechaStr = factura.fecha ? new Date(String(factura.fecha)+"T12:00:00").toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric"}) : "";
-  const subtotal = items.reduce((a,i) => a + i.cantidad*i.precio_unitario, 0);
+  const subtotal = items.reduce((a,i) => a + Number(i.cantidad)*Number(i.precio_unitario), 0);
   const iva      = factura.tieneIva ? subtotal*0.21 : 0;
   const total    = subtotal + iva;
   const logoUrl  = typeof window !== "undefined" ? `${window.location.origin}/logo-bayres.png` : "/logo-bayres.png";
-  const rows     = items.map(i=>`<tr><td style="padding:8px 10px;border-bottom:1px solid #eee;font-size:13px">${i.descripcion}</td><td style="padding:8px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:center">${i.cantidad}</td><td style="padding:8px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:right">${i.precio_unitario.toFixed(2).replace(".",",")} €</td><td style="padding:8px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:right">${(i.cantidad*i.precio_unitario).toFixed(2).replace(".",",")} €</td></tr>`).join("");
-  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;color:#333;padding:24px;font-size:13px}.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;border-bottom:3px solid #1a3c8f;padding-bottom:16px}.emp .nm{font-size:13px;font-weight:bold;color:#1a3c8f}.emp .sb{font-size:11px;color:#666;margin-top:2px}.logo{width:140px}.tit{font-size:32px;font-weight:bold;color:#1a3c8f;margin-bottom:6px}.fecha{font-size:13px;margin-bottom:20px}.fecha span{font-weight:bold}.crow{display:flex;justify-content:space-between;margin-bottom:20px}.ccol .lbl{font-size:12px;font-weight:bold;margin-bottom:4px}.ccol .val{font-size:13px}table{width:100%;border-collapse:collapse;margin-bottom:0}thead tr{background:#1a3c8f}th{padding:10px;color:white;font-size:13px;font-weight:bold;text-align:left}th.r{text-align:right}th.c{text-align:center}.tots td{padding:5px 10px;font-size:13px;border:none}.tff{font-size:18px;font-weight:bold;color:#1a3c8f}.ftr{margin-top:32px;border-top:1px solid #ddd;padding-top:12px;display:flex;justify-content:space-between;font-size:11px;color:#666}</style></head><body>
-<div class="hdr"><div class="emp"><div class="nm">PERSIANAS BAYRES S.L.</div><div class="sb">NIF: B44820504</div><div class="sb">Carrer de l'Herba Lluisa, 41 planta ch, puerta 6</div><div class="sb">Mutxamel, 03110.</div></div><img src="${logoUrl}" class="logo"/></div>
-<div class="tit">${titulo}</div><div class="fecha">Fecha: <span>${fechaStr}</span></div>
-<div class="crow"><div class="ccol"><div class="lbl">Cliente:</div><div class="val">${factura.cliente}</div>${factura.direccionCliente?`<div class="val">${factura.direccionCliente}</div>`:""} ${factura.nifCliente?`<div class="val">NIF: ${factura.nifCliente}</div>`:""}</div><div class="ccol" style="text-align:right"><div class="lbl">N.º de ${titulo}</div><div class="val">${factura.numeroDoc}</div></div></div>
-<table><thead><tr><th>Descripción</th><th class="c" style="width:70px">Cantidad</th><th class="r" style="width:110px">Precio unitario</th><th class="r" style="width:110px">Precio total</th></tr></thead><tbody>${rows}</tbody></table>
-<table class="tots"><tr><td colspan="2"></td><td style="text-align:right;font-weight:bold;padding-top:12px">Total</td><td style="text-align:right;padding-top:12px">${subtotal.toFixed(2).replace(".",",")} €</td></tr>${factura.tieneIva?`<tr><td colspan="2"></td><td style="text-align:right;font-weight:bold">IVA 21%</td><td style="text-align:right">${iva.toFixed(2).replace(".",",")} €</td></tr>`:""}<tr><td colspan="2"></td><td class="tff" style="text-align:right">${total.toFixed(2).replace(".",",")} €</td><td class="tff" style="text-align:right">${total.toFixed(2).replace(".",",")} €</td></tr></table>
-<div class="ftr"><div><strong>Comunícate con nosotros</strong></div><div>Teléfono: 695 26 69 81<br>Email: Persianasbayres@gmail.com</div></div></body></html>`;
+  const FILAS_MIN = 8;
+  const dataRows = items.map((i,idx)=>`<tr style="background:${idx%2===0?"#f0f4ff":"#fff"}"><td style="padding:9px 12px;font-size:13px;color:#1a3c8f">${i.descripcion}</td><td style="padding:9px 12px;font-size:13px;text-align:center">${Number(i.cantidad)}</td><td style="padding:9px 12px;font-size:13px;text-align:right">${Number(i.precio_unitario).toFixed(2).replace(".",",")} €</td><td style="padding:9px 12px;font-size:13px;text-align:right">${(Number(i.cantidad)*Number(i.precio_unitario)).toFixed(2).replace(".",",")} €</td></tr>`);
+  const emptyCount = Math.max(0, FILAS_MIN - dataRows.length);
+  const emptyRows  = Array.from({length:emptyCount},(_,idx)=>`<tr style="background:${(dataRows.length+idx)%2===0?"#f0f4ff":"#fff"}"><td style="padding:9px 12px">&nbsp;</td><td></td><td></td><td></td></tr>`);
+  const allRows    = [...dataRows,...emptyRows].join("");
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;color:#333;background:#fff;padding:32px 40px;font-size:13px}
+@media print{@page{margin:10mm}body{padding:0}}
+.top-bar{height:5px;background:#1a3c8f;margin-bottom:24px}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}
+.emp-nm{font-size:13px;font-weight:bold;color:#1a3c8f;margin-bottom:3px}
+.emp-sub{font-size:11px;color:#555;line-height:1.6}
+.logo{height:52px}
+.titulo{font-size:36px;font-weight:bold;color:#1a3c8f;margin-bottom:6px}
+.fecha-line{font-size:14px;font-weight:bold;color:#1a3c8f;margin-bottom:24px}
+.fecha-line span{color:#1a3c8f}
+.info-row{display:flex;justify-content:space-between;margin-bottom:28px}
+.cli-label{font-size:12px;font-weight:bold;color:#333;margin-bottom:4px}
+.cli-name{font-size:14px;font-weight:bold;color:#333}
+.cli-sub{font-size:12px;color:#555;line-height:1.7}
+.doc-label{font-size:12px;font-weight:bold;color:#333;margin-bottom:4px;text-align:right}
+.doc-num{font-size:14px;color:#333;text-align:right}
+table{width:100%;border-collapse:collapse;margin-bottom:0}
+thead tr{background:#1a3c8f}
+th{padding:10px 12px;color:#fff;font-size:13px;font-weight:bold;text-align:left}
+th.r{text-align:right}th.c{text-align:center}
+.tots{margin-top:0}
+.tots td{padding:5px 16px;font-size:13px;border:none;text-align:right}
+.tot-label{font-weight:normal;color:#555}
+.tot-val{width:110px}
+.grand-line td{border-top:2px solid #1a3c8f;padding-top:8px!important}
+.grand{font-size:20px;font-weight:bold;color:#1a3c8f}
+</style></head><body>
+<div class="top-bar"></div>
+<div class="hdr">
+  <div><div class="emp-nm">PERSIANAS BAYRES S.L.</div><div class="emp-sub">NIF: B44820504<br>Carrer de l'Herba Lluisa, 41 planta ch, puerta 6<br>Mutxamel, 03110.</div></div>
+  <img src="${logoUrl}" class="logo"/>
+</div>
+<div class="titulo">${titulo}</div>
+<div class="fecha-line">Fecha:&nbsp;&nbsp;<span>${fechaStr}</span></div>
+<div class="info-row">
+  <div><div class="cli-label">Cliente:</div><div class="cli-name">${factura.cliente||""}</div>${factura.direccionCliente?`<div class="cli-sub">${String(factura.direccionCliente).replace(/,/g,"<br>")}</div>`:""}${factura.nifCliente?`<div class="cli-sub">NIF: ${factura.nifCliente}</div>`:""}</div>
+  <div><div class="doc-label">N.º de ${titulo}</div><div class="doc-num">${factura.numeroDoc||""}</div></div>
+</div>
+<table>
+  <thead><tr><th>Descripción</th><th class="c" style="width:80px">Cantidad</th><th class="r" style="width:120px">Precio unitario</th><th class="r" style="width:120px">Precio total</th></tr></thead>
+  <tbody>${allRows}</tbody>
+</table>
+<table class="tots" style="margin-top:8px">
+  <tr><td class="tot-label">Total</td><td class="tot-val">${subtotal.toFixed(2).replace(".",",")} €</td></tr>
+  ${factura.tieneIva?`<tr><td class="tot-label">IVA 21%</td><td class="tot-val">${iva.toFixed(2).replace(".",",")} €</td></tr>`:""}
+  <tr class="grand-line"><td class="grand">${total.toFixed(2).replace(".",",")} €</td><td class="grand tot-val">${total.toFixed(2).replace(".",",")} €</td></tr>
+</table>
+</body></html>`;
 }
 
-async function generarPDF(factura: Record<string, unknown>, items: Item[]) {
-  const html2pdf = (await import("html2pdf.js")).default;
+function generarPDF(factura: Record<string, unknown>, items: Item[]) {
   const html = generarFacturaHTML(factura, items);
-  const el   = document.createElement("div");
-  el.innerHTML = html; el.style.position = "absolute"; el.style.left = "-9999px";
-  document.body.appendChild(el);
-  await html2pdf().set({ margin:[8,8,8,8], filename:`${factura.numeroDoc}.pdf`, image:{type:"jpeg",quality:0.98}, html2canvas:{scale:2,useCORS:true,logging:false}, jsPDF:{unit:"mm",format:"a4",orientation:"portrait"} }).from(el).save();
-  document.body.removeChild(el);
+  const win = window.open("", "_blank", "width=900,height=700");
+  if (!win) { alert("Activá las ventanas emergentes para generar el PDF"); return; }
+  win.document.write(html);
+  win.document.close();
+  win.onload = () => { win.focus(); win.print(); };
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -210,7 +256,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
       {/* Logo Bayres */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/logo-bayres.png"
+        src="/PB%20Logo%20BL.png"
         alt="Persianas Bayres"
         style={{
           width:160,
@@ -397,7 +443,20 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     if(estado==="aceptado"){const pres=data.find(p=>p.id===id);if(pres)setConfirmTrabajo({...pres,...updated});}}catch(e){setErr((e as Error).message);}
   };
   const abrirFactura=async(p:Record<string,unknown>)=>{
-    try{const pi=await dbGet("presupuesto_items",`&presupuesto_id=eq.${p.id}&order=orden.asc`);setFacturaItems(pi);}catch{setFacturaItems([]);}
+    try{
+      const pi=await dbGet("presupuesto_items",`&presupuesto_id=eq.${p.id}&order=orden.asc`);
+      if(pi.length>0){
+        setFacturaItems(pi.map((i:Record<string,unknown>)=>({...i,cantidad:Number(i.cantidad),precio_unitario:Number(i.precio_unitario)})));
+      } else {
+        const importeTotal=Number(p.importe)||0;
+        const importeSinIva=p.tiene_iva?importeTotal/(1+IVA):importeTotal;
+        setFacturaItems([{descripcion:p.servicio as string||"Servicio",cantidad:1,precio_unitario:Math.round(importeSinIva*100)/100,orden:0}]);
+      }
+    }catch{
+      const importeTotal=Number(p.importe)||0;
+      const importeSinIva=p.tiene_iva?importeTotal/(1+IVA):importeTotal;
+      setFacturaItems([{descripcion:p.servicio as string||"Servicio",cantidad:1,precio_unitario:Math.round(importeSinIva*100)/100,orden:0}]);
+    }
     setShowFactura(p);
   };
 
@@ -564,7 +623,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const submit=async()=>{if(!(form.cliente as string).trim())return;setSaving(true);try{if(editing){const u=await dbUpdate("trabajos",editing.id as string,form);setData(d=>d.map(t=>t.id===editing.id?u:t));}else{const u=await dbInsert("trabajos",form);setData(d=>[u,...d]);}setShowForm(false);}catch(e){setErr((e as Error).message);}finally{setSaving(false);}};
   const del=async(id:string)=>{try{await dbDelete("trabajos",id);setData(d=>d.filter(t=>t.id!==id));setDetail(null);setConfirmDel(null);}catch(e){setErr((e as Error).message);}};
   const changeEstado=async(id:string,estado:string)=>{try{await dbUpdate("trabajos",id,{estado});setData(d=>d.map(t=>t.id===id?{...t,estado}:t));setDetail(d=>d?{...d,estado}:null);}catch(e){setErr((e as Error).message);}};
-  const abrirFactura=(t:Record<string,unknown>)=>{const its:Item[]=t.importe?[{descripcion:t.servicio as string,cantidad:1,precio_unitario:Number(t.importe),orden:0}]:[];setFacturaItems(its);setShowFactura(t);};
+  const abrirFactura=(t:Record<string,unknown>)=>{const its:Item[]=[{descripcion:t.servicio as string||"Servicio",cantidad:1,precio_unitario:t.importe?Number(t.importe):0,orden:0}];setFacturaItems(its);setShowFactura(t);};
   return <div>
     {err&&<ErrBanner msg={err} onClose={()=>setErr(null)}/>}
     {confirmDel&&<ConfirmModal msg="¿Eliminar este trabajo?" onConfirm={()=>del(confirmDel)} onCancel={()=>setConfirmDel(null)}/>}
