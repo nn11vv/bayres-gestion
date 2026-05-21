@@ -333,8 +333,8 @@ function ItemsEditor({items,onChange}:{items:Item[];onChange:(items:Item[])=>voi
         </div>
         <input style={{...S.input,marginBottom:8}} value={item.descripcion} onChange={e=>update(i,"descripcion",e.target.value)} placeholder="Descripción del item"/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-          <div><label style={{display:"block",fontSize:10,color:"#7AA0D4",marginBottom:4}}>CANTIDAD</label><input style={S.input} type="number" min="1" value={item.cantidad} onChange={e=>update(i,"cantidad",Number(e.target.value))}/></div>
-          <div><label style={{display:"block",fontSize:10,color:"#7AA0D4",marginBottom:4}}>PRECIO UNIT. (€)</label><input style={S.input} type="number" min="0" step="0.01" value={item.precio_unitario} onChange={e=>update(i,"precio_unitario",Number(e.target.value))}/></div>
+          <div><label style={{display:"block",fontSize:10,color:"#7AA0D4",marginBottom:4}}>CANTIDAD</label><input style={S.input} type="number" min="1" value={item.cantidad} onFocus={e=>e.target.select()} onChange={e=>update(i,"cantidad",Number(e.target.value))}/></div>
+          <div><label style={{display:"block",fontSize:10,color:"#7AA0D4",marginBottom:4}}>PRECIO UNIT. (€)</label><input style={S.input} type="number" min="0" step="0.01" value={item.precio_unitario} onFocus={e=>e.target.select()} onChange={e=>update(i,"precio_unitario",Number(e.target.value))}/></div>
         </div>
         <div style={{textAlign:"right",fontSize:13,color:ACCENT,fontWeight:700,marginTop:6}}>{(item.cantidad*item.precio_unitario).toFixed(2)}€</div>
       </div>
