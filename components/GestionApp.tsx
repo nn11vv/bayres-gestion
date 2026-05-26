@@ -1,6 +1,24 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+/* eslint-disable react/no-unescaped-entities */
+
+import { useState, useEffect, useCallback, useRef } from "react";
+
+declare global {
+  interface Window {
+    google?: {
+      maps?: {
+        places?: {
+          Autocomplete: new (input: HTMLInputElement, options?: Record<string, unknown>) => {
+            addListener: (eventName: string, handler: () => void) => void;
+            getPlace: () => { formatted_address?: string; name?: string };
+          };
+        };
+      };
+    };
+    __googleMapsPlacesPromise?: Promise<boolean>;
+  }
+}
 
 // ─── Supabase config ───────────────────────────────────────────────────────────
 const SUPA_URL = "https://tnstmdckdraladewdocf.supabase.co";
@@ -46,6 +64,31 @@ async function enviarFacturaEmail(emailCliente: string, factura: Record<string, 
   return r.ok;
 }
 
+function loadGoogleMapsPlaces(): Promise<boolean> {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  if (window.google?.maps?.places) return Promise.resolve(true);
+  if (window.__googleMapsPlacesPromise) return window.__googleMapsPlacesPromise;
+  const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  if (!key) return Promise.resolve(false);
+  window.__googleMapsPlacesPromise = new Promise(resolve => {
+    const existing = document.getElementById("google-maps-places") as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener("load", () => resolve(!!window.google?.maps?.places), { once: true });
+      existing.addEventListener("error", () => resolve(false), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.id = "google-maps-places";
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&language=es&region=ES`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve(!!window.google?.maps?.places);
+    script.onerror = () => resolve(false);
+    document.head.appendChild(script);
+  });
+  return window.__googleMapsPlacesPromise;
+}
+
 const VAPID_PUBLIC = "BCH1ymwR0tNamx2WFTPvOzyVE9C4iEDmuwOWzOjOmG2E7FF3aMSbUzvtkCxYqsEqthETWsozk5Na3jteDJGZM-w";
 function urlBase64ToUint8Array(b: string) {
   const pad = "=".repeat((4 - b.length % 4) % 4);
@@ -76,7 +119,7 @@ function generarFacturaHTML(factura: Record<string, unknown>, items: Item[]): st
   const subtotal = items.reduce((a,i) => a + Number(i.cantidad)*Number(i.precio_unitario), 0);
   const iva      = factura.tieneIva ? subtotal*0.21 : 0;
   const total    = subtotal + iva;
-  const logoUrl  = typeof window !== "undefined" ? `${window.location.origin}/logo-bayres.png` : "/logo-bayres.png";
+  const logoUrl  = typeof window !== "undefined" ? `${window.location.origin}/Logo%20alternativo.png` : "/Logo%20alternativo.png";
   const FILAS_MIN = 8;
   const dataRows = items.map((i,idx)=>`<tr style="background:${idx%2===0?"#f0f4ff":"#fff"}"><td style="padding:9px 12px;font-size:13px;color:#1a3c8f">${i.descripcion}</td><td style="padding:9px 12px;font-size:13px;text-align:center">${Number(i.cantidad)}</td><td style="padding:9px 12px;font-size:13px;text-align:right">${Number(i.precio_unitario).toFixed(2).replace(".",",")} €</td><td style="padding:9px 12px;font-size:13px;text-align:right">${(Number(i.cantidad)*Number(i.precio_unitario)).toFixed(2).replace(".",",")} €</td></tr>`);
   const emptyCount = Math.max(0, FILAS_MIN - dataRows.length);
@@ -85,12 +128,15 @@ function generarFacturaHTML(factura: Record<string, unknown>, items: Item[]): st
   return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Arial,sans-serif;color:#333;background:#fff;padding:32px 40px;font-size:13px}
-@media print{@page{margin:10mm}body{padding:0}}
+@media print{@page{margin:10mm}.print-toolbar{display:none!important}body{padding:0}}
+.print-toolbar{position:sticky;top:0;z-index:10;display:flex;justify-content:flex-end;gap:10px;margin:-16px -16px 18px;padding:12px 16px;background:#f7f8fb;border-bottom:1px solid #d9deea}
+.print-toolbar button{border:1px solid #1a3c8f;border-radius:6px;background:#fff;color:#1a3c8f;padding:8px 14px;font-size:13px;font-weight:bold;cursor:pointer}
+.print-toolbar button.primary{background:#1a3c8f;color:#fff}
 .top-bar{height:5px;background:#1a3c8f;margin-bottom:24px}
 .hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}
 .emp-nm{font-size:13px;font-weight:bold;color:#1a3c8f;margin-bottom:3px}
 .emp-sub{font-size:11px;color:#555;line-height:1.6}
-.logo{height:52px}
+.logo{width:260px;height:88px;object-fit:cover;object-position:center}
 .titulo{font-size:36px;font-weight:bold;color:#1a3c8f;margin-bottom:6px}
 .fecha-line{font-size:14px;font-weight:bold;color:#1a3c8f;margin-bottom:24px}
 .fecha-line span{color:#1a3c8f}
@@ -111,6 +157,7 @@ th.r{text-align:right}th.c{text-align:center}
 .grand-line td{border-top:2px solid #1a3c8f;padding-top:8px!important}
 .grand{font-size:20px;font-weight:bold;color:#1a3c8f}
 </style></head><body>
+<div class="print-toolbar"><button onclick="window.close()">Cerrar</button><button class="primary" onclick="window.print()">Imprimir</button></div>
 <div class="top-bar"></div>
 <div class="hdr">
   <div><div class="emp-nm">PERSIANAS BAYRES S.L.</div><div class="emp-sub">NIF: B44820504<br>Carrer de l'Herba Lluisa, 41 planta ch, puerta 6<br>Mutxamel, 03110.</div></div>
@@ -140,7 +187,7 @@ function generarPDF(factura: Record<string, unknown>, items: Item[]) {
   if (!win) { alert("Activá las ventanas emergentes para generar el PDF"); return; }
   win.document.write(html);
   win.document.close();
-  win.onload = () => { win.focus(); win.print(); };
+  win.onload = () => { win.focus(); };
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -282,7 +329,30 @@ function Toggle({active,onChange,label}:{active:boolean;onChange:()=>void;label:
   return <div onClick={onChange} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#0D2259",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #1A3A7A",cursor:"pointer"}}><span style={{color:"#7AA0D4",fontSize:14,fontWeight:600}}>{label}</span><div style={{width:44,height:24,borderRadius:12,background:active?ACCENT:"#2C2C2E",position:"relative",transition:"background 0.2s",border:"1px solid #1A3A7A",flexShrink:0}}><div style={{position:"absolute",top:2,left:active?20:2,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left 0.2s"}}/></div></div>;
 }
 function DireccionField({value,onChange}:{value:string;onChange:(v:string)=>void}) {
-  return <Field label="Dirección"><div style={{display:"flex",gap:8}}><input style={{...S.input,flex:1}} value={value} onChange={e=>onChange(e.target.value)} placeholder="Ej: Calle Mayor 14, Alicante"/>{value.trim()&&<a href={mapsUrl(value)} target="_blank" rel="noreferrer" style={{background:ACCENT,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",width:42,flexShrink:0,textDecoration:"none",fontSize:18}}>📍</a>}</div></Field>;
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    let mounted = true;
+    loadGoogleMapsPlaces().then(ok => {
+      if (!mounted || !ok || !inputRef.current || !window.google?.maps?.places) return;
+      const autocomplete = new window.google.maps.places.Autocomplete(inputRef.current, {
+        fields: ["formatted_address", "name"],
+        componentRestrictions: { country: "es" },
+      });
+      autocomplete.addListener("place_changed", () => {
+        const place = autocomplete.getPlace();
+        onChangeRef.current(place.formatted_address || place.name || inputRef.current?.value || "");
+      });
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  return <Field label="Direccion"><div style={{display:"flex",gap:8}}><input ref={inputRef} style={{...S.input,flex:1}} value={value} onChange={e=>onChange(e.target.value)} placeholder="Ej: Calle Mayor 14, Alicante" autoComplete="off"/>{value.trim()&&<a href={mapsUrl(value)} target="_blank" rel="noreferrer" aria-label="Abrir en Google Maps" title="Abrir en Google Maps" style={{background:"#fff",border:"1px solid #D8E2F1",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",width:46,flexShrink:0,textDecoration:"none",boxShadow:"0 2px 8px rgba(0,0,0,0.14)"}}><span aria-hidden="true" style={{width:24,height:24,backgroundImage:"url(https://www.gstatic.com/images/branding/product/1x/maps_48dp.png)",backgroundSize:"contain",backgroundRepeat:"no-repeat",backgroundPosition:"center"}} /></a>}</div></Field>;
 }
 function Modal({title,onClose,children,zIndex=100}:{title:string;onClose:()=>void;children:React.ReactNode;zIndex?:number}) {
   return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex,display:"flex",alignItems:"flex-end",justifyContent:"center"}}><div style={{background:"#0A1F4E",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:480,padding:"24px 20px 40px",maxHeight:"90vh",overflowY:"auto"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><span style={{fontWeight:700,fontSize:17,color:"#EEF2FF"}}>{title}</span><button onClick={onClose} style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:8,color:"#7AA0D4",padding:"6px 10px",cursor:"pointer",fontSize:16}}>✕</button></div>{children}</div></div>;
@@ -291,7 +361,7 @@ function ConfirmModal({msg,onConfirm,onCancel}:{msg:string;onConfirm:()=>void;on
   return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}><div style={{background:"#0A1F4E",borderRadius:16,padding:24,maxWidth:360,width:"100%",border:"1px solid #1A3A7A"}}><div style={{fontSize:15,color:"#EEF2FF",marginBottom:20,lineHeight:1.5}}>{msg}</div><div style={{display:"flex",gap:10}}><button onClick={onCancel} style={{...S.btnGhost,flex:1}}>Cancelar</button><button onClick={onConfirm} style={{...S.btnPrim,flex:1,background:"#DC2626"}}>Confirmar</button></div></div></div>;
 }
 function FAB({onClick}:{onClick:()=>void}) {
-  return <button onClick={onClick} style={{position:"fixed",bottom:90,right:20,width:52,height:52,borderRadius:"50%",background:ACCENT,border:"none",color:"#fff",fontSize:24,cursor:"pointer",boxShadow:"0 4px 20px #1E7FD855",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>;
+  return <button className="gestion-fab" onClick={onClick} style={{position:"fixed",bottom:90,right:20,width:52,height:52,borderRadius:"50%",background:ACCENT,border:"none",color:"#fff",fontSize:24,cursor:"pointer",boxShadow:"0 4px 20px #1E7FD855",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>;
 }
 function StatCard({label,value,color}:{label:string;value:string|number;color:string}) {
   return <div style={{background:color+"15",border:`1px solid ${color}30`,borderRadius:12,padding:"12px 14px"}}><div style={{fontSize:11,color,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:4}}>{label}</div><div style={{fontSize:22,fontWeight:800,color:"#EEF2FF"}}>{value}</div></div>;
@@ -487,7 +557,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
       <div style={{fontSize:12,color:"#7AA0D4",marginTop:10}}>Creados en el mes: <strong style={{color:"#EEF2FF"}}>{createdMonth.length}</strong></div>
     </div>
     <FilterPills options={[["all","Todos"],...Object.entries(ESTADOS_P).map(([k,v])=>[k,v.label] as [string,string])]} active={filter} onChange={setFilter}/>
-    {loading?<Spinner/>:<div style={{display:"flex",flexDirection:"column",gap:8}}>
+    {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {filtered.length===0&&<Empty/>}
       {filtered.map(p=>(
         <div key={p.id as string} onClick={()=>setDetail(p)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer"}}>
@@ -566,7 +636,7 @@ function MaterialesTab() {
       <StatCard label="Por comprar" value={pendientes.length} color={ACCENT}/>
     </div>
     <FilterPills options={[["pendiente","Por comprar"],["comprado","Comprado"]]} active={filter} onChange={setFilter}/>
-    {loading?<Spinner/>:<div style={{display:"flex",flexDirection:"column",gap:8}}>
+    {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {shown.length===0&&<Empty/>}
       {shown.map(m=>(
         <div key={m.id as string} style={{background:"#0A1F4E",border:`1px solid ${m.urgente&&!m.comprado?"#DC262640":"#1A3A7A"}`,borderRadius:14,padding:14,display:"flex",alignItems:"center",gap:12}}>
@@ -633,7 +703,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
       <StatCard label="Hoy" value={hoy} color="#059669"/>
     </div>
     <FilterPills options={[["all","Todos"],...Object.entries(ESTADOS_T).map(([k,v])=>[k,v.label] as [string,string])]} active={filter} onChange={setFilter}/>
-    {loading?<Spinner/>:<div style={{display:"flex",flexDirection:"column",gap:8}}>
+    {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {filtered.length===0&&<Empty/>}
       {filtered.map(t=>(
         <div key={t.id as string} onClick={()=>setDetail(t)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer"}}>
@@ -694,8 +764,8 @@ export default function GestionApp() {
   return (
     <>
       {!splashDone && <SplashScreen onDone={()=>setSplashDone(true)} />}
-      <div style={{background:NAVY2,minHeight:"100vh",fontFamily:"var(--font-plus-jakarta), system-ui, sans-serif",color:"#EEF2FF",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
-        <div style={{background:NAVY,padding:"14px 20px 12px",borderBottom:"1px solid #1A3A7A",position:"sticky",top:0,zIndex:40}}>
+      <div className="gestion-shell" style={{background:NAVY2,minHeight:"100vh",fontFamily:"var(--font-plus-jakarta), system-ui, sans-serif",color:"#EEF2FF",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
+        <div className="gestion-topbar" style={{background:NAVY,padding:"14px 20px 12px",borderBottom:"1px solid #1A3A7A",position:"sticky",top:0,zIndex:40}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/sol-de-mayo.png" alt="" style={{width:40,height:40,objectFit:"contain",flexShrink:0}}/>
@@ -705,12 +775,12 @@ export default function GestionApp() {
             </div>
           </div>
         </div>
-        <div style={{padding:"16px 16px 0"}}>
+        <div className="gestion-content" style={{padding:"16px 16px 0"}}>
           {tab==="presupuestos"&&<PresupuestosTab onCrearTrabajo={p=>{setTrabajoPrecar(p);setTab("trabajos");}}/>}
           {tab==="materiales"  &&<MaterialesTab/>}
           {tab==="trabajos"    &&<TrabajosTab precargar={trabajoPrecar}/>}
         </div>
-        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:NAVY,borderTop:"1px solid #1A3A7A",display:"flex",zIndex:60}}>
+        <div className="gestion-bottom-nav" style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:NAVY,borderTop:"1px solid #1A3A7A",display:"flex",zIndex:60}}>
           {TABS.map(t=>(
             <button key={t.key} onClick={()=>{setTab(t.key);if(t.key!=="trabajos")setTrabajoPrecar(null);}} style={{flex:1,background:"none",border:"none",padding:"12px 8px 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
               <span style={{fontSize:18}}>{t.icon}</span>

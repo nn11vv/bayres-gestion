@@ -20,6 +20,45 @@ body {
   font-family: var(--font-plus-jakarta), Arial, Helvetica, sans-serif;
 }
 
+@media (min-width: 900px) {
+  .gestion-shell {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    min-height: 100vh;
+  }
+
+  .gestion-topbar {
+    padding: 16px 28px !important;
+  }
+
+  .gestion-content {
+    padding: 24px 28px 0 !important;
+  }
+
+  .gestion-record-list {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    align-items: start;
+  }
+
+  .gestion-bottom-nav {
+    max-width: none !important;
+  }
+
+  .gestion-fab {
+    right: 32px !important;
+  }
+}
+
+.pac-container {
+  z-index: 10000 !important;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 6px;
+  font-family: var(--font-plus-jakarta), Arial, Helvetica, sans-serif;
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;
