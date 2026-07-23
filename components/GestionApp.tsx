@@ -3,6 +3,7 @@
 /* eslint-disable react/no-unescaped-entities */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { CalendarDays } from "lucide-react";
 
 declare global {
   interface Window {
@@ -205,7 +206,7 @@ const ESTADOS_T: Record<string,{label:string;color:string}> = {
 };
 const ZONAS     = ["Alicante","Playa San Juan","San Juan Pueblo","Mutxamel","El Campello","Bussot","Benidorm","Jávea","Otra"];
 const SERVICIOS = ["Reparación persiana","Instalación persiana","Motorización persiana","Mosquitera","Aire acondicionado","Electricidad","Otro"];
-const VALID_TABS = ["presupuestos","materiales","trabajos"];
+const VALID_TABS = ["presupuestos","materiales","trabajos","agenda"];
 const ITEM_BLANK: Item = { descripcion:"", cantidad:1, precio_unitario:0, orden:0 };
 
 const fmt       = (d: string) => d ? new Date(d+"T12:00:00").toLocaleDateString("es-ES",{day:"2-digit",month:"short"}) : "—";
@@ -743,6 +744,208 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   </div>;
 }
 
+// ─── AGENDA ────────────────────────────────────────────────────────────────────
+const DIAS_ABR  = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+const MESES_ABR = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+
+function mondayOf(d: Date): Date {
+  const r = new Date(d);
+  r.setDate(r.getDate() + (r.getDay() === 0 ? -6 : 1 - r.getDay()));
+  r.setHours(0, 0, 0, 0);
+  return r;
+}
+function addDays(d: Date, n: number): Date { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+function toISODate(d: Date): string { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function fmtDayShort(d: Date): string { return `${d.getDate()} ${MESES_ABR[d.getMonth()]}`; }
+function ordenarPorHora(a: Record<string, unknown>, b: Record<string, unknown>): number {
+  const ha = a.hora_inicio as string | null, hb = b.hora_inicio as string | null;
+  if (!ha && !hb) return 0;
+  if (!ha) return 1;
+  if (!hb) return -1;
+  return ha.localeCompare(hb);
+}
+function cargaTrabajos(n: number): { icon: string; color: string } {
+  if (n >= 5) return { icon: "🔥", color: "#DC2626" };
+  if (n >= 2) return { icon: "●", color: "#D97706" };
+  return { icon: "●", color: "#059669" };
+}
+const DURACION_MIN: Record<string, number> = {
+  "Reparación persiana": 45,
+  "Instalación persiana": 45,
+  "Motorización persiana": 120,
+  "Mosquitera": 60,
+  "Aire acondicionado": 180,
+  "Electricidad": 120,
+  "Otro": 60,
+};
+function horaAMinutos(h: string): number { const [hh, mm] = h.split(":").map(Number); return hh * 60 + mm; }
+
+function AgendaTab() {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [porFecha, setPorFecha] = useState<Record<string, Record<string, unknown>[]>>({});
+  const fetchedRef = useRef<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [overlapWarning, setOverlapWarning] = useState<{ cliente: string; hora_inicio: string; servicio: string } | null>(null);
+  const touchStartX = useRef<number | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX; };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    if (Math.abs(dx) > 50) setWeekOffset(o => dx < 0 ? o + 1 : o - 1);
+    touchStartX.current = null;
+  };
+
+  const weekMonday = addDays(mondayOf(new Date()), weekOffset * 7);
+  const weekSunday = addDays(weekMonday, 6);
+  const rangeStart = toISODate(weekMonday);
+  const rangeEnd   = toISODate(addDays(weekMonday, 13));
+
+  useEffect(() => {
+    if (fetchedRef.current.has(rangeStart)) return;
+    fetchedRef.current.add(rangeStart);
+    (async () => {
+      try {
+        setLoading(true);
+        const rows: Record<string, unknown>[] = await dbGet("trabajos", `&fecha=gte.${rangeStart}&fecha=lte.${rangeEnd}`);
+        setPorFecha(prev => {
+          const next = { ...prev };
+          for (const t of rows) {
+            const f = t.fecha as string;
+            next[f] = [...(next[f] || []).filter(x => x.id !== t.id), t];
+          }
+          return next;
+        });
+      } catch (e) { setErr((e as Error).message); }
+      finally { setLoading(false); }
+    })();
+  }, [rangeStart, rangeEnd]);
+
+  const dias = Array.from({ length: 7 }, (_, i) => addDays(weekMonday, i));
+  const blank = { cliente: "", zona: ZONAS[0], direccion: "", servicio: SERVICIOS[0], estado: "pendiente", fecha: selectedDate || rangeStart, hora_inicio: "", nota: "" };
+  const [form, setForm] = useState<Record<string, unknown>>(blank);
+
+  const openForm = () => { setForm({ ...blank, fecha: selectedDate || rangeStart }); setOverlapWarning(null); setShowForm(true); };
+  const doInsert = async () => {
+    setSaving(true);
+    try {
+      const nuevo = await dbInsert("trabajos", form);
+      setPorFecha(prev => {
+        const f = nuevo.fecha as string;
+        return { ...prev, [f]: [...(prev[f] || []), nuevo] };
+      });
+      setShowForm(false);
+      setOverlapWarning(null);
+    } catch (e) { setErr((e as Error).message); }
+    finally { setSaving(false); }
+  };
+  const submit = async () => {
+    if (!(form.cliente as string).trim()) return;
+    const horaInicio = (form.hora_inicio as string) || "";
+    if (!horaInicio) { await doInsert(); return; }
+    setSaving(true);
+    try {
+      const mismoDia: Record<string, unknown>[] = await dbGet("trabajos", `&fecha=eq.${form.fecha}&hora_inicio=not.is.null`);
+      const nuevoInicio = horaAMinutos(horaInicio);
+      const nuevoFin = nuevoInicio + (DURACION_MIN[form.servicio as string] || 60);
+      const choque = mismoDia.find(t => {
+        const ini = horaAMinutos(t.hora_inicio as string);
+        const fin = ini + (DURACION_MIN[t.servicio as string] || 60);
+        return nuevoInicio < fin && ini < nuevoFin;
+      });
+      setSaving(false);
+      if (choque) { setOverlapWarning({ cliente: choque.cliente as string, hora_inicio: choque.hora_inicio as string, servicio: choque.servicio as string }); return; }
+    } catch (e) { setSaving(false); setErr((e as Error).message); return; }
+    await doInsert();
+  };
+
+  const formModal = showForm && <Modal title="Nuevo trabajo" onClose={() => setShowForm(false)}>
+    <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e => setForm({ ...form, cliente: e.target.value })} placeholder="Nombre del cliente" /></Field>
+    <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e => setForm({ ...form, zona: e.target.value })}>{ZONAS.map(z => <option key={z}>{z}</option>)}</select></Field>
+    <DireccionField value={(form.direccion as string) || ""} onChange={v => setForm({ ...form, direccion: v })} />
+    <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e => setForm({ ...form, servicio: e.target.value })}>{SERVICIOS.map(s => <option key={s}>{s}</option>)}</select></Field>
+    <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e => setForm({ ...form, estado: e.target.value })}>{Object.entries(ESTADOS_T).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></Field>
+    <Field label="Fecha"><input style={S.input} type="date" value={form.fecha as string} onChange={e => { setForm({ ...form, fecha: e.target.value }); setOverlapWarning(null); }} /></Field>
+    <Field label="Hora de inicio"><input style={S.input} type="time" value={(form.hora_inicio as string) || ""} onChange={e => { setForm({ ...form, hora_inicio: e.target.value }); setOverlapWarning(null); }} /></Field>
+    <Field label="Nota"><textarea style={{ ...S.input, minHeight: 70, resize: "vertical" }} value={form.nota as string} onChange={e => setForm({ ...form, nota: e.target.value })} placeholder="Observaciones, acceso, materiales..." /></Field>
+    {overlapWarning ? <div style={{ background: "#78350F", border: "1px solid #D97706", borderRadius: 10, padding: "12px 14px" }}>
+      <div style={{ fontSize: 13, color: "#FDE68A", marginBottom: 12, lineHeight: 1.5 }}>
+        ⚠️ Posible solapamiento con {overlapWarning.cliente} ({overlapWarning.hora_inicio} - {overlapWarning.servicio}).<br />¿Querés confirmar igual?
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={() => setOverlapWarning(null)} style={{ ...S.btnGhost, flex: 1 }}>Cancelar</button>
+        <button onClick={doInsert} disabled={saving} style={{ ...S.btnPrim, flex: 1, opacity: saving ? 0.7 : 1 }}>{saving ? "Guardando..." : "Confirmar igual"}</button>
+      </div>
+    </div> : <button onClick={submit} disabled={saving} style={{ ...S.btnPrim, opacity: saving ? 0.7 : 1 }}>{saving ? "Guardando..." : "Añadir trabajo"}</button>}
+  </Modal>;
+
+  if (selectedDate) {
+    const fecha = new Date(selectedDate + "T12:00:00");
+    const trabajos = [...(porFecha[selectedDate] || [])].sort(ordenarPorHora);
+    return <div>
+      {err && <ErrBanner msg={err} onClose={() => setErr(null)} />}
+      <button onClick={() => setSelectedDate(null)} style={{ ...S.btnGhost, marginBottom: 14 }}>← Volver a la semana</button>
+      <div style={{ fontSize: 18, fontWeight: 800, color: "#EEF2FF", marginBottom: 14 }}>{DIAS_ABR[fecha.getDay()]} {fmtDayShort(fecha)}</div>
+      {trabajos.length === 0 ? <Empty /> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {trabajos.map(t => (
+          <div key={t.id as string} style={{ background: "#0A1F4E", border: "1px solid #1A3A7A", borderRadius: 14, padding: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 13, color: ACCENT, fontWeight: 700 }}>{(t.hora_inicio as string) || "sin hora"}</span>
+              <Badge estado={t.estado as string} map={ESTADOS_T} />
+            </div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: "#EEF2FF", marginBottom: 4 }}>{t.cliente as string}</div>
+            <div style={{ fontSize: 13, color: "#7AA0D4" }}>{t.servicio as string} · {t.zona as string}</div>
+          </div>
+        ))}
+      </div>}
+      <FAB onClick={openForm} />
+      {formModal}
+    </div>;
+  }
+
+  const todayISO = toISODate(new Date());
+
+  return <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    {err && <ErrBanner msg={err} onClose={() => setErr(null)} />}
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+      <button onClick={() => setWeekOffset(o => o - 1)} style={{ background: "#0D2259", border: "1px solid #1A3A7A", borderRadius: 10, color: "#7AA0D4", width: 40, height: 40, fontSize: 18, cursor: "pointer" }}>‹</button>
+      <div style={{ fontSize: 15, fontWeight: 800, color: "#EEF2FF" }}>{fmtDayShort(weekMonday)} – {fmtDayShort(weekSunday)}</div>
+      <button onClick={() => setWeekOffset(o => o + 1)} style={{ background: "#0D2259", border: "1px solid #1A3A7A", borderRadius: 10, color: "#7AA0D4", width: 40, height: 40, fontSize: 18, cursor: "pointer" }}>›</button>
+    </div>
+    {loading && Object.keys(porFecha).length === 0 ? <Spinner /> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {dias.map(d => {
+        const iso = toISODate(d);
+        const trabajos = porFecha[iso] || [];
+        const carga = cargaTrabajos(trabajos.length);
+        const isToday = iso === todayISO;
+        const isPast = iso < todayISO;
+        return <div key={iso} onClick={() => setSelectedDate(iso)} style={{
+          background: isToday ? "#132C66" : "#0A1F4E",
+          border: "1px solid #1A3A7A",
+          borderLeft: isToday ? "3px solid #60a5fa" : "1px solid #1A3A7A",
+          borderRadius: 14, padding: "14px 16px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          cursor: "pointer",
+          opacity: isPast && !isToday ? 0.4 : 1,
+        }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 15, color: "#EEF2FF" }}>{DIAS_ABR[d.getDay()]} {d.getDate()}</span>
+              {isToday && <span style={{ background: "#60a5fa22", color: "#60a5fa", border: "1px solid #60a5fa55", borderRadius: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, letterSpacing: 0.5 }}>HOY</span>}
+            </div>
+            <div style={{ fontSize: 13, color: "#7AA0D4", marginTop: 2, opacity: trabajos.length === 0 ? 0.5 : 1 }}>{trabajos.length === 0 ? "libre" : `${trabajos.length} trabajo${trabajos.length === 1 ? "" : "s"}`}</div>
+          </div>
+          <span style={{ fontSize: carga.icon === "🔥" ? 20 : 12, color: carga.color }}>{carga.icon}</span>
+        </div>;
+      })}
+    </div>}
+    {formModal}
+  </div>;
+}
+
 // ─── ROOT ──────────────────────────────────────────────────────────────────────
 export default function GestionApp() {
   const [tab,setTab]=useState("presupuestos");
@@ -759,6 +962,7 @@ export default function GestionApp() {
     {key:"presupuestos",label:"Presupuestos",icon:"📋"},
     {key:"materiales",  label:"Compras",      icon:"🛒"},
     {key:"trabajos",    label:"Trabajos",      icon:"🔧"},
+    {key:"agenda",      label:"Agenda",        icon:"📅"},
   ];
 
   return (
@@ -779,11 +983,12 @@ export default function GestionApp() {
           {tab==="presupuestos"&&<PresupuestosTab onCrearTrabajo={p=>{setTrabajoPrecar(p);setTab("trabajos");}}/>}
           {tab==="materiales"  &&<MaterialesTab/>}
           {tab==="trabajos"    &&<TrabajosTab precargar={trabajoPrecar}/>}
+          {tab==="agenda"      &&<AgendaTab/>}
         </div>
         <div className="gestion-bottom-nav" style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:NAVY,borderTop:"1px solid #1A3A7A",display:"flex",zIndex:60}}>
           {TABS.map(t=>(
             <button key={t.key} onClick={()=>{setTab(t.key);if(t.key!=="trabajos")setTrabajoPrecar(null);}} style={{flex:1,background:"none",border:"none",padding:"12px 8px 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-              <span style={{fontSize:18}}>{t.icon}</span>
+              {t.key==="agenda"?<CalendarDays size={18} color={tab===t.key?ACCENT:"#3A5A9A"}/>:<span style={{fontSize:18}}>{t.icon}</span>}
               <span style={{fontSize:10,fontWeight:700,letterSpacing:0.5,color:tab===t.key?ACCENT:"#3A5A9A"}}>{t.label.toUpperCase()}</span>
               {tab===t.key&&<div style={{width:20,height:2,background:ACCENT,borderRadius:2}}/>}
             </button>
