@@ -1,4 +1,4 @@
-import { dbUpdate, dbUpdateWhere } from "./db";
+import { dbGet, dbUpdate, dbUpdateWhere } from "./db";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -38,4 +38,32 @@ export async function archivarManualmente(tabla: "presupuestos" | "trabajos", id
 
 export async function desarchivar(tabla: "presupuestos" | "trabajos", id: string) {
   return dbUpdate(tabla, id, { archivado_at: null });
+}
+
+// Recordatorio de seguimiento: presupuestos 'enviado' hace más de 3 días sin
+// respuesta reciben UN push (agrupado si hay varios) y quedan marcados para
+// no repetir. changeEstado() resetea recordatorio_enviado_at a null cuando el
+// presupuesto sale de 'enviado', así el ciclo puede reiniciarse más adelante.
+export async function chequearSeguimientos(): Promise<void> {
+  const cutoffFecha = new Date(Date.now() - 3 * DAY_MS).toISOString().slice(0, 10);
+  const pendientes: Record<string, unknown>[] = await dbGet(
+    "presupuestos",
+    `&estado=eq.enviado&archivado_at=is.null&recordatorio_enviado_at=is.null&fecha=lt.${cutoffFecha}`
+  );
+  if (pendientes.length === 0) return;
+
+  const label = (p: Record<string, unknown>) => `${p.numero_doc || "Presupuesto"} · ${p.cliente}`;
+  const title = pendientes.length === 1 ? "📋 Sin respuesta — Bayres" : `📋 ${pendientes.length} presupuestos sin respuesta`;
+  const body = pendientes.length === 1
+    ? `${label(pendientes[0])} lleva más de 3 días sin responder`
+    : pendientes.map(label).join(", ");
+
+  await fetch("/api/notificar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, body }),
+  }).catch(() => {});
+
+  const now = new Date().toISOString();
+  await Promise.all(pendientes.map(p => dbUpdate("presupuestos", p.id as string, { recordatorio_enviado_at: now })));
 }

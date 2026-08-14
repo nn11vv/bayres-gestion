@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { CalendarDays, Archive, Search, Info } from "lucide-react";
 import { SUPA_URL, headers, dbGet, dbInsert, dbUpdate, dbDelete, dbDeleteWhere } from "@/lib/db";
-import { archivarRegistrosAntiguos, archivarManualmente, desarchivar } from "@/lib/archivado";
+import { archivarRegistrosAntiguos, archivarManualmente, desarchivar, chequearSeguimientos } from "@/lib/archivado";
 
 declare global {
   interface Window {
@@ -499,6 +499,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     const update:Record<string,unknown>={estado,estado_updated_at:now};
     if(estado==="aceptado")update.aceptado_at=now;
     if(estado==="rechazado")update.rechazado_at=now;
+    if(estado!=="enviado")update.recordatorio_enviado_at=null;
     try{const updated=await dbUpdate("presupuestos",id,update);setData(d=>d.map(p=>p.id===id?updated:p));setDetail(d=>d?{...d,...updated}:null);
     if(estado==="aceptado"){const pres=data.find(p=>p.id===id);if(pres)setConfirmTrabajo({...pres,...updated});}}catch(e){setErr((e as Error).message);}
   };
@@ -982,11 +983,16 @@ export default function GestionApp() {
   },[]);
 
   useEffect(()=>{
-    archivarRegistrosAntiguos().then(n=>{
-      if(n<=0)return;
-      setArchivadoToast(`${n} registro${n===1?"":"s"} archivado${n===1?"":"s"} automáticamente`);
-      setTimeout(()=>setArchivadoToast(null),4000);
-    }).catch(console.error);
+    (async()=>{
+      try{
+        const n=await archivarRegistrosAntiguos();
+        if(n>0){
+          setArchivadoToast(`${n} registro${n===1?"":"s"} archivado${n===1?"":"s"} automáticamente`);
+          setTimeout(()=>setArchivadoToast(null),4000);
+        }
+        await chequearSeguimientos();
+      }catch(e){console.error(e);}
+    })();
   },[]);
 
   const TABS=[
