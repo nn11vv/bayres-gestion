@@ -3,7 +3,7 @@
 /* eslint-disable react/no-unescaped-entities */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CalendarDays, Archive } from "lucide-react";
+import { CalendarDays, Archive, Search, Info } from "lucide-react";
 import { SUPA_URL, headers, dbGet, dbInsert, dbUpdate, dbDelete, dbDeleteWhere } from "@/lib/db";
 import { archivarRegistrosAntiguos, archivarManualmente, desarchivar } from "@/lib/archivado";
 
@@ -184,6 +184,8 @@ const mapsUrl   = (dir: string) => `https://maps.google.com/?q=${encodeURICompon
 const calcTotalItems = (items: Item[]) => items.reduce((a,i)=>a+i.cantidad*i.precio_unitario,0);
 const monthKey  = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
 const monthName = (m: string) => new Date(`${m}-01T12:00:00`).toLocaleDateString("es-ES",{month:"long",year:"numeric"});
+const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+const matchesSearch = (r: Record<string,unknown>, normQuery: string) => normalize([r.cliente,r.direccion,r.zona,r.acceso].filter(Boolean).join(" ")).includes(normQuery);
 
 const S = {
   input:    {width:"100%",background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,color:"#EEF2FF",padding:"10px 12px",fontSize:15,boxSizing:"border-box" as const,fontFamily:"inherit",outline:"none"},
@@ -340,6 +342,13 @@ function ArchiveToggleButton({active,onClick}:{active:boolean;onClick:()=>void})
 function StatCard({label,value,color}:{label:string;value:string|number;color:string}) {
   return <div style={{background:color+"15",border:`1px solid ${color}30`,borderRadius:12,padding:"12px 14px"}}><div style={{fontSize:11,color,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:4}}>{label}</div><div style={{fontSize:22,fontWeight:800,color:"#EEF2FF"}}>{value}</div></div>;
 }
+function SearchInput({value,onChange,placeholder}:{value:string;onChange:(v:string)=>void;placeholder:string}) {
+  return <div style={{position:"relative",marginBottom:14}}>
+    <Search size={16} color="#7AA0D4" style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}/>
+    <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{...S.input,paddingLeft:36,paddingRight:value?36:12,fontSize:16}}/>
+    {value&&<button onClick={()=>onChange("")} aria-label="Limpiar búsqueda" style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#7AA0D4",cursor:"pointer",fontSize:16,padding:8,lineHeight:1}}>✕</button>}
+  </div>;
+}
 function FilterPills({options,active,onChange}:{options:[string,string][];active:string;onChange:(k:string)=>void}) {
   return <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:14,paddingBottom:4}}>{options.map(([k,label])=><button key={k} onClick={()=>onChange(k)} style={{border:"none",borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",background:active===k?ACCENT:"#0D2259",color:active===k?"#fff":"#7AA0D4"}}>{label}</button>)}</div>;
 }
@@ -441,7 +450,8 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const [items,setItems]=useState<Item[]>([{...ITEM_BLANK}]);
   const [reportMonth,setReportMonth]=useState(monthKey());
   const [showArchived,setShowArchived]=useState(false);
-  const blank={cliente:"",zona:ZONAS[0],direccion:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",tiene_iva:false,email_cliente:"",direccion_cliente:"",nif_cliente:""};
+  const [search,setSearch]=useState("");
+  const blank={cliente:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",tiene_iva:false,email_cliente:"",direccion_cliente:"",nif_cliente:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
 
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("presupuestos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
@@ -450,7 +460,9 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const activeData=data.filter(p=>!p.archivado_at);
   const archivedData=data.filter(p=>p.archivado_at);
   const baseData=showArchived?archivedData:activeData;
-  const filtered=filter==="all"?baseData:baseData.filter(p=>p.estado===filter);
+  const searchNorm=normalize(search.trim());
+  const searchedData=searchNorm?baseData.filter(p=>matchesSearch(p,searchNorm)):baseData;
+  const filtered=filter==="all"?searchedData:searchedData.filter(p=>p.estado===filter);
   const inReportMonth=(value: unknown) => typeof value==="string" && value.slice(0,7)===reportMonth;
   const acceptedMonth=activeData.filter(p=>p.estado==="aceptado"&&inReportMonth(p.aceptado_at||p.estado_updated_at||p.fecha));
   const rejectedMonth=activeData.filter(p=>p.estado==="rechazado"&&inReportMonth(p.rechazado_at||p.estado_updated_at||p.fecha));
@@ -542,6 +554,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
       </div>
       <div style={{fontSize:12,color:"#7AA0D4",marginTop:10}}>Creados en el mes: <strong style={{color:"#EEF2FF"}}>{createdMonth.length}</strong></div>
     </div>
+    <SearchInput value={search} onChange={setSearch} placeholder="Buscar cliente, dirección..."/>
     <FilterPills options={[["all","Todos"],...Object.entries(ESTADOS_P).map(([k,v])=>[k,v.label] as [string,string])]} active={filter} onChange={setFilter}/>
     {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {filtered.length===0&&<Empty/>}
@@ -564,6 +577,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     {detail&&<Modal title="Presupuesto" onClose={()=>setDetail(null)}>
       <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{detail.cliente as string}</div><div style={{fontSize:14,color:"#7AA0D4"}}>{detail.servicio as string} · {detail.zona as string}</div></div>
       <MapsLink direccion={detail.direccion as string}/>
+      {!!detail.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{detail.acceso as string}</span></div>}
       <div style={{background:"#0D2259",borderRadius:10,padding:14,marginBottom:14}}>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:"#7AA0D4",fontSize:13}}>Total {detail.tiene_iva?"(c/IVA)":"(sin IVA)"}</span><span style={{color:ACCENT,fontWeight:800,fontSize:16}}>{detail.importe?`${Number(detail.importe).toFixed(2)}€`:"—"}</span></div>
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:"#7AA0D4",fontSize:13}}>Fecha</span><span style={{color:"#EEF2FF",fontSize:13}}>{fmt(detail.fecha as string)}</span></div>
@@ -581,6 +595,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
       <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre del cliente"/></Field>
       <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e=>setForm({...form,zona:e.target.value})}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></Field>
       <DireccionField value={(form.direccion as string)||""} onChange={v=>setForm({...form,direccion:v})}/>
+      <Field label="Acceso / indicaciones"><textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={(form.acceso as string)||""} onChange={e=>setForm({...form,acceso:e.target.value})} placeholder="Ej: Escalera B, 3º Izq · Timbre no funciona · Aparcar en Calle Mayor"/></Field>
       <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e=>setForm({...form,servicio:e.target.value})}>{SERVICIOS.map(s=><option key={s}>{s}</option>)}</select></Field>
       <ItemsEditor items={items} onChange={setItems}/>
       <Toggle active={!!form.tiene_iva} onChange={()=>setForm({...form,tiene_iva:!form.tiene_iva})} label="Aplicar IVA 21%"/>
@@ -669,15 +684,18 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const [showFactura,setShowFactura]=useState<Record<string,unknown>|null>(null);
   const [facturaItems,setFacturaItems]=useState<Item[]>([]);
   const [showArchived,setShowArchived]=useState(false);
-  const blank={cliente:"",zona:ZONAS[0],direccion:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",hora_inicio:"",email_cliente:"",direccion_cliente:"",nif_cliente:"",tiene_iva:false,importe:""};
+  const [search,setSearch]=useState("");
+  const blank={cliente:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",hora_inicio:"",email_cliente:"",direccion_cliente:"",nif_cliente:"",tiene_iva:false,importe:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("trabajos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
   useEffect(()=>{load();},[load]);
-  useEffect(()=>{if(!precargar)return;setForm({...blank,cliente:precargar.cliente,zona:precargar.zona,direccion:precargar.direccion||"",servicio:precargar.servicio,nota:precargar.nota||"",email_cliente:precargar.email_cliente||"",tiene_iva:precargar.tiene_iva||false,importe:precargar.importe||""});setEditing(null);setShowForm(true);},[precargar]);
+  useEffect(()=>{if(!precargar)return;setForm({...blank,cliente:precargar.cliente,zona:precargar.zona,direccion:precargar.direccion||"",acceso:precargar.acceso||"",servicio:precargar.servicio,nota:precargar.nota||"",email_cliente:precargar.email_cliente||"",tiene_iva:precargar.tiene_iva||false,importe:precargar.importe||""});setEditing(null);setShowForm(true);},[precargar]);
   const activeData=data.filter(t=>!t.archivado_at);
   const archivedData=data.filter(t=>t.archivado_at);
   const baseData=showArchived?archivedData:activeData;
-  const filtered=filter==="all"?baseData:baseData.filter(t=>t.estado===filter);
+  const searchNorm=normalize(search.trim());
+  const searchedData=searchNorm?baseData.filter(t=>matchesSearch(t,searchNorm)):baseData;
+  const filtered=filter==="all"?searchedData:searchedData.filter(t=>t.estado===filter);
   const enCurso=activeData.filter(t=>t.estado==="en_curso").length;
   const hoy=activeData.filter(t=>t.fecha===new Date().toISOString().slice(0,10)).length;
   const openNew=()=>{setEditing(null);setForm(blank);setShowForm(true);};
@@ -702,6 +720,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
       <StatCard label="En curso" value={enCurso} color={ACCENT}/>
       <StatCard label="Hoy" value={hoy} color="#059669"/>
     </div>
+    <SearchInput value={search} onChange={setSearch} placeholder="Buscar cliente, dirección..."/>
     <FilterPills options={[["all","Todos"],...Object.entries(ESTADOS_T).map(([k,v])=>[k,v.label] as [string,string])]} active={filter} onChange={setFilter}/>
     {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {filtered.length===0&&<Empty/>}
@@ -721,6 +740,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
     {detail&&<Modal title="Trabajo" onClose={()=>setDetail(null)}>
       <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{detail.cliente as string}</div><div style={{fontSize:14,color:"#7AA0D4"}}>{detail.servicio as string} · {detail.zona as string} · {fmt(detail.fecha as string)}{detail.hora_inicio?` · 🕐 ${detail.hora_inicio as string}`:""}</div></div>
       <MapsLink direccion={detail.direccion as string}/>
+      {!!detail.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{detail.acceso as string}</span></div>}
       {detail.nota&&<ExpandableNote text={detail.nota as string}/>}
       <Field label="Cambiar estado"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>{Object.entries(ESTADOS_T).map(([k,v])=><button key={k} onClick={()=>changeEstado(detail.id as string,k)} style={{border:`1px solid ${v.color}55`,borderRadius:8,padding:"8px 6px",background:detail.estado===k?v.color+"22":"transparent",color:v.color,fontSize:12,fontWeight:700,cursor:"pointer"}}>{v.label}</button>)}</div></Field>
       <div style={{display:"flex",gap:8,marginTop:8}}>
@@ -734,6 +754,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
       <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre del cliente"/></Field>
       <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e=>setForm({...form,zona:e.target.value})}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></Field>
       <DireccionField value={(form.direccion as string)||""} onChange={v=>setForm({...form,direccion:v})}/>
+      <Field label="Acceso / indicaciones"><textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={(form.acceso as string)||""} onChange={e=>setForm({...form,acceso:e.target.value})} placeholder="Ej: Escalera B, 3º Izq · Timbre no funciona · Aparcar en Calle Mayor"/></Field>
       <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e=>setForm({...form,servicio:e.target.value})}>{SERVICIOS.map(s=><option key={s}>{s}</option>)}</select></Field>
       <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e=>setForm({...form,estado:e.target.value})}>{Object.entries(ESTADOS_T).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
       <Field label="Fecha"><input style={S.input} type="date" value={form.fecha as string} onChange={e=>setForm({...form,fecha:e.target.value})}/></Field>
