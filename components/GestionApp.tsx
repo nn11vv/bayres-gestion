@@ -3,7 +3,9 @@
 /* eslint-disable react/no-unescaped-entities */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Archive } from "lucide-react";
+import { SUPA_URL, headers, dbGet, dbInsert, dbUpdate, dbDelete, dbDeleteWhere } from "@/lib/db";
+import { archivarRegistrosAntiguos, archivarManualmente, desarchivar } from "@/lib/archivado";
 
 declare global {
   interface Window {
@@ -19,38 +21,6 @@ declare global {
     };
     __googleMapsPlacesPromise?: Promise<boolean>;
   }
-}
-
-// ─── Supabase config ───────────────────────────────────────────────────────────
-const SUPA_URL = "https://tnstmdckdraladewdocf.supabase.co";
-const SUPA_KEY = "sb_publishable_tFyiNQh9qfwnultGIMLq-w_lM_bfL6g";
-const headers  = { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` };
-
-async function dbGet(table: string, filter = "") {
-  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?order=created_at.desc${filter}`, { headers });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-async function dbInsert(table: string, data: Record<string, unknown>) {
-  const { id: _id, ...body } = data; void _id;
-  const clean = Object.fromEntries(Object.entries(body).map(([k, v]) => [k, v === "" ? null : v]));
-  const r = await fetch(`${SUPA_URL}/rest/v1/${table}`, { method: "POST", headers: { ...headers, "Prefer": "return=representation" }, body: JSON.stringify(clean) });
-  if (!r.ok) throw new Error(await r.text());
-  return (await r.json())[0];
-}
-async function dbUpdate(table: string, id: string, data: Record<string, unknown>) {
-  const clean = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, v === "" ? null : v]));
-  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}`, { method: "PATCH", headers: { ...headers, "Prefer": "return=representation" }, body: JSON.stringify(clean) });
-  if (!r.ok) throw new Error(await r.text());
-  return (await r.json())[0];
-}
-async function dbDelete(table: string, id: string) {
-  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?id=eq.${id}`, { method: "DELETE", headers });
-  if (!r.ok) throw new Error(await r.text());
-}
-async function dbDeleteWhere(table: string, field: string, value: string) {
-  const r = await fetch(`${SUPA_URL}/rest/v1/${table}?${field}=eq.${value}`, { method: "DELETE", headers });
-  if (!r.ok) throw new Error(await r.text());
 }
 
 interface Item { id?: string; descripcion: string; cantidad: number; precio_unitario: number; orden: number; }
@@ -364,6 +334,9 @@ function ConfirmModal({msg,onConfirm,onCancel}:{msg:string;onConfirm:()=>void;on
 function FAB({onClick}:{onClick:()=>void}) {
   return <button className="gestion-fab" onClick={onClick} style={{position:"fixed",bottom:90,right:20,width:52,height:52,borderRadius:"50%",background:ACCENT,border:"none",color:"#fff",fontSize:24,cursor:"pointer",boxShadow:"0 4px 20px #1E7FD855",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>;
 }
+function ArchiveToggleButton({active,onClick}:{active:boolean;onClick:()=>void}) {
+  return <button onClick={onClick} style={{position:"fixed",bottom:90,left:20,display:"flex",alignItems:"center",gap:6,background:active?ACCENT:"#0D2259",border:`1px solid ${active?ACCENT:"#1A3A7A"}`,borderRadius:26,color:active?"#fff":"#7AA0D4",padding:"11px 16px",fontSize:13,fontWeight:700,cursor:"pointer",boxShadow:active?"0 4px 20px #1E7FD855":"0 2px 8px rgba(0,0,0,0.25)",zIndex:50}}><Archive size={16}/>Archivados</button>;
+}
 function StatCard({label,value,color}:{label:string;value:string|number;color:string}) {
   return <div style={{background:color+"15",border:`1px solid ${color}30`,borderRadius:12,padding:"12px 14px"}}><div style={{fontSize:11,color,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:4}}>{label}</div><div style={{fontSize:22,fontWeight:800,color:"#EEF2FF"}}>{value}</div></div>;
 }
@@ -467,18 +440,22 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const [facturaItems,setFacturaItems]=useState<Item[]>([]);
   const [items,setItems]=useState<Item[]>([{...ITEM_BLANK}]);
   const [reportMonth,setReportMonth]=useState(monthKey());
+  const [showArchived,setShowArchived]=useState(false);
   const blank={cliente:"",zona:ZONAS[0],direccion:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",tiene_iva:false,email_cliente:"",direccion_cliente:"",nif_cliente:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
 
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("presupuestos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
   useEffect(()=>{load();},[load]);
 
-  const filtered=filter==="all"?data:data.filter(p=>p.estado===filter);
+  const activeData=data.filter(p=>!p.archivado_at);
+  const archivedData=data.filter(p=>p.archivado_at);
+  const baseData=showArchived?archivedData:activeData;
+  const filtered=filter==="all"?baseData:baseData.filter(p=>p.estado===filter);
   const inReportMonth=(value: unknown) => typeof value==="string" && value.slice(0,7)===reportMonth;
-  const acceptedMonth=data.filter(p=>p.estado==="aceptado"&&inReportMonth(p.aceptado_at||p.estado_updated_at||p.fecha));
-  const rejectedMonth=data.filter(p=>p.estado==="rechazado"&&inReportMonth(p.rechazado_at||p.estado_updated_at||p.fecha));
-  const pendingMonth=data.filter(p=>p.estado==="pendiente"&&inReportMonth(p.fecha||p.created_at));
-  const createdMonth=data.filter(p=>inReportMonth(p.fecha||p.created_at));
+  const acceptedMonth=activeData.filter(p=>p.estado==="aceptado"&&inReportMonth(p.aceptado_at||p.estado_updated_at||p.fecha));
+  const rejectedMonth=activeData.filter(p=>p.estado==="rechazado"&&inReportMonth(p.rechazado_at||p.estado_updated_at||p.fecha));
+  const pendingMonth=activeData.filter(p=>p.estado==="pendiente"&&inReportMonth(p.fecha||p.created_at));
+  const createdMonth=activeData.filter(p=>inReportMonth(p.fecha||p.created_at));
   const acceptedTotal=acceptedMonth.reduce((a,p)=>a+Number(p.importe||0),0);
   const rejectedTotal=rejectedMonth.reduce((a,p)=>a+Number(p.importe||0),0);
   const pendingTotal=pendingMonth.reduce((a,p)=>a+Number(p.importe||0),0);
@@ -530,6 +507,14 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     }
     setShowFactura(p);
   };
+  const toggleArchivado=async(p:Record<string,unknown>)=>{
+    try{
+      const id=p.id as string;
+      const updated=p.archivado_at?await desarchivar("presupuestos",id):await archivarManualmente("presupuestos",id);
+      setData(d=>d.map(x=>x.id===id?{...x,...updated}:x));
+      setDetail(d=>d?{...d,...updated}:null);
+    }catch(e){setErr((e as Error).message);}
+  };
 
   return <div>
     {err&&<ErrBanner msg={err} onClose={()=>setErr(null)}/>}
@@ -561,7 +546,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {filtered.length===0&&<Empty/>}
       {filtered.map(p=>(
-        <div key={p.id as string} onClick={()=>setDetail(p)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer"}}>
+        <div key={p.id as string} onClick={()=>setDetail(p)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer",opacity:p.archivado_at?0.6:1}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:6}}>
             <div style={{minWidth:0}}>
               <div style={{fontWeight:700,fontSize:15,color:"#EEF2FF"}}>{p.cliente as string}</div>
@@ -570,11 +555,12 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
             <div style={{textAlign:"right"}}><span style={{fontWeight:800,fontSize:15,color:ACCENT}}>{p.importe?`${Number(p.importe).toFixed(2)}€`:"—"}</span>{p.tiene_iva&&<span style={{display:"block",fontSize:10,color:"#7AA0D4"}}>c/IVA</span>}</div>
           </div>
           <div style={{fontSize:13,color:"#7AA0D4",marginBottom:8}}>{p.servicio as string} · {p.zona as string}</div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><Badge estado={p.estado as string} map={ESTADOS_P}/><span style={{fontSize:12,color:"#3A5A9A"}}>{fmt(p.fecha as string)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",gap:6,alignItems:"center"}}><Badge estado={p.estado as string} map={ESTADOS_P}/>{!!p.archivado_at&&<span style={{background:"#6B728022",color:"#9CA3AF",border:"1px solid #6B728044",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:0.4}}>ARCHIVADO</span>}</div><span style={{fontSize:12,color:"#3A5A9A"}}>{fmt(p.fecha as string)}</span></div>
         </div>
       ))}
     </div>}
     <FAB onClick={openNew}/>
+    <ArchiveToggleButton active={showArchived} onClick={()=>setShowArchived(a=>!a)}/>
     {detail&&<Modal title="Presupuesto" onClose={()=>setDetail(null)}>
       <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{detail.cliente as string}</div><div style={{fontSize:14,color:"#7AA0D4"}}>{detail.servicio as string} · {detail.zona as string}</div></div>
       <MapsLink direccion={detail.direccion as string}/>
@@ -587,6 +573,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
       <div style={{display:"flex",gap:8,marginTop:8}}>
         <button onClick={()=>openEdit(detail)} style={{...S.btnGhost,flex:1}}>✏️ Editar</button>
         <button onClick={()=>abrirFactura(detail)} style={{...S.btnGhost,flex:1}}>🧾 Factura</button>
+        <button onClick={()=>toggleArchivado(detail)} style={{...S.btnGhost,flex:1}}>{detail.archivado_at?"📤 Desarchivar":"📦 Archivar"}</button>
         <button onClick={()=>setConfirmDel(detail.id as string)} style={{...S.btnGhost,flex:1,color:"#DC2626",borderColor:"#DC262640"}}>🗑️</button>
       </div>
     </Modal>}
@@ -681,20 +668,32 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const [confirmDel,setConfirmDel]=useState<string|null>(null);
   const [showFactura,setShowFactura]=useState<Record<string,unknown>|null>(null);
   const [facturaItems,setFacturaItems]=useState<Item[]>([]);
+  const [showArchived,setShowArchived]=useState(false);
   const blank={cliente:"",zona:ZONAS[0],direccion:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",hora_inicio:"",email_cliente:"",direccion_cliente:"",nif_cliente:"",tiene_iva:false,importe:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("trabajos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
   useEffect(()=>{load();},[load]);
   useEffect(()=>{if(!precargar)return;setForm({...blank,cliente:precargar.cliente,zona:precargar.zona,direccion:precargar.direccion||"",servicio:precargar.servicio,nota:precargar.nota||"",email_cliente:precargar.email_cliente||"",tiene_iva:precargar.tiene_iva||false,importe:precargar.importe||""});setEditing(null);setShowForm(true);},[precargar]);
-  const filtered=filter==="all"?data:data.filter(t=>t.estado===filter);
-  const enCurso=data.filter(t=>t.estado==="en_curso").length;
-  const hoy=data.filter(t=>t.fecha===new Date().toISOString().slice(0,10)).length;
+  const activeData=data.filter(t=>!t.archivado_at);
+  const archivedData=data.filter(t=>t.archivado_at);
+  const baseData=showArchived?archivedData:activeData;
+  const filtered=filter==="all"?baseData:baseData.filter(t=>t.estado===filter);
+  const enCurso=activeData.filter(t=>t.estado==="en_curso").length;
+  const hoy=activeData.filter(t=>t.fecha===new Date().toISOString().slice(0,10)).length;
   const openNew=()=>{setEditing(null);setForm(blank);setShowForm(true);};
   const openEdit=(t:Record<string,unknown>)=>{setEditing(t);setForm({...t});setShowForm(true);setDetail(null);};
   const submit=async()=>{if(!(form.cliente as string).trim())return;setSaving(true);try{if(editing){const u=await dbUpdate("trabajos",editing.id as string,form);setData(d=>d.map(t=>t.id===editing.id?u:t));}else{const u=await dbInsert("trabajos",form);setData(d=>[u,...d]);}setShowForm(false);}catch(e){setErr((e as Error).message);}finally{setSaving(false);}};
   const del=async(id:string)=>{try{await dbDelete("trabajos",id);setData(d=>d.filter(t=>t.id!==id));setDetail(null);setConfirmDel(null);}catch(e){setErr((e as Error).message);}};
   const changeEstado=async(id:string,estado:string)=>{try{await dbUpdate("trabajos",id,{estado});setData(d=>d.map(t=>t.id===id?{...t,estado}:t));setDetail(d=>d?{...d,estado}:null);}catch(e){setErr((e as Error).message);}};
   const abrirFactura=(t:Record<string,unknown>)=>{const its:Item[]=[{descripcion:t.servicio as string||"Servicio",cantidad:1,precio_unitario:t.importe?Number(t.importe):0,orden:0}];setFacturaItems(its);setShowFactura(t);};
+  const toggleArchivado=async(t:Record<string,unknown>)=>{
+    try{
+      const id=t.id as string;
+      const updated=t.archivado_at?await desarchivar("trabajos",id):await archivarManualmente("trabajos",id);
+      setData(d=>d.map(x=>x.id===id?{...x,...updated}:x));
+      setDetail(d=>d?{...d,...updated}:null);
+    }catch(e){setErr((e as Error).message);}
+  };
   return <div>
     {err&&<ErrBanner msg={err} onClose={()=>setErr(null)}/>}
     {confirmDel&&<ConfirmModal msg="¿Eliminar este trabajo?" onConfirm={()=>del(confirmDel)} onCancel={()=>setConfirmDel(null)}/>}
@@ -707,17 +706,18 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
     {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {filtered.length===0&&<Empty/>}
       {filtered.map(t=>(
-        <div key={t.id as string} onClick={()=>setDetail(t)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer"}}>
+        <div key={t.id as string} onClick={()=>setDetail(t)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer",opacity:t.archivado_at?0.6:1}}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
             <span style={{fontWeight:700,fontSize:15,color:"#EEF2FF"}}>{t.cliente as string}</span>
             <div style={{textAlign:"right"}}><span style={{fontSize:12,color:"#3A5A9A"}}>{fmt(t.fecha as string)}</span>{t.hora_inicio&&<span style={{display:"block",fontSize:11,color:"#7AA0D4"}}>🕐 {t.hora_inicio as string}</span>}</div>
           </div>
           <div style={{fontSize:13,color:"#7AA0D4",marginBottom:8}}>{t.servicio as string} · {t.zona as string}</div>
-          <Badge estado={t.estado as string} map={ESTADOS_T}/>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}><Badge estado={t.estado as string} map={ESTADOS_T}/>{!!t.archivado_at&&<span style={{background:"#6B728022",color:"#9CA3AF",border:"1px solid #6B728044",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:0.4}}>ARCHIVADO</span>}</div>
         </div>
       ))}
     </div>}
     <FAB onClick={openNew}/>
+    <ArchiveToggleButton active={showArchived} onClick={()=>setShowArchived(a=>!a)}/>
     {detail&&<Modal title="Trabajo" onClose={()=>setDetail(null)}>
       <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{detail.cliente as string}</div><div style={{fontSize:14,color:"#7AA0D4"}}>{detail.servicio as string} · {detail.zona as string} · {fmt(detail.fecha as string)}{detail.hora_inicio?` · 🕐 ${detail.hora_inicio as string}`:""}</div></div>
       <MapsLink direccion={detail.direccion as string}/>
@@ -726,6 +726,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
       <div style={{display:"flex",gap:8,marginTop:8}}>
         <button onClick={()=>openEdit(detail)} style={{...S.btnGhost,flex:1}}>✏️ Editar</button>
         <button onClick={()=>abrirFactura(detail)} style={{...S.btnGhost,flex:1}}>🧾 Factura</button>
+        <button onClick={()=>toggleArchivado(detail)} style={{...S.btnGhost,flex:1}}>{detail.archivado_at?"📤 Desarchivar":"📦 Archivar"}</button>
         <button onClick={()=>setConfirmDel(detail.id as string)} style={{...S.btnGhost,flex:1,color:"#DC2626",borderColor:"#DC262640"}}>🗑️</button>
       </div>
     </Modal>}
@@ -810,7 +811,7 @@ function AgendaTab() {
     (async () => {
       try {
         setLoading(true);
-        const rows: Record<string, unknown>[] = await dbGet("trabajos", `&fecha=gte.${rangeStart}&fecha=lte.${rangeEnd}`);
+        const rows: Record<string, unknown>[] = await dbGet("trabajos", `&fecha=gte.${rangeStart}&fecha=lte.${rangeEnd}&archivado_at=is.null`);
         setPorFecha(prev => {
           const next = { ...prev };
           for (const t of rows) {
@@ -951,11 +952,20 @@ export default function GestionApp() {
   const [tab,setTab]=useState("presupuestos");
   const [trabajoPrecar,setTrabajoPrecar]=useState<Record<string,unknown>|null>(null);
   const [splashDone,setSplashDone]=useState(false);
+  const [archivadoToast,setArchivadoToast]=useState<string|null>(null);
 
   useEffect(()=>{
     const params=new URLSearchParams(window.location.search);
     const t=params.get("tab");
     if(t&&VALID_TABS.includes(t))setTab(t);
+  },[]);
+
+  useEffect(()=>{
+    archivarRegistrosAntiguos().then(n=>{
+      if(n<=0)return;
+      setArchivadoToast(`${n} registro${n===1?"":"s"} archivado${n===1?"":"s"} automáticamente`);
+      setTimeout(()=>setArchivadoToast(null),4000);
+    }).catch(console.error);
   },[]);
 
   const TABS=[
@@ -968,6 +978,7 @@ export default function GestionApp() {
   return (
     <>
       {!splashDone && <SplashScreen onDone={()=>setSplashDone(true)} />}
+      {archivadoToast&&<div style={{position:"fixed",top:14,left:"50%",transform:"translateX(-50%)",zIndex:500,background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 16px",fontSize:13,color:"#93B4E8",boxShadow:"0 4px 20px rgba(0,0,0,0.35)",whiteSpace:"nowrap"}}>📦 {archivadoToast}</div>}
       <div className="gestion-shell" style={{background:NAVY2,minHeight:"100vh",fontFamily:"var(--font-plus-jakarta), system-ui, sans-serif",color:"#EEF2FF",maxWidth:480,margin:"0 auto",paddingBottom:80}}>
         <div className="gestion-topbar" style={{background:NAVY,padding:"14px 20px 12px",borderBottom:"1px solid #1A3A7A",position:"sticky",top:0,zIndex:40}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
