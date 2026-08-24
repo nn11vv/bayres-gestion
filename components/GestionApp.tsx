@@ -468,12 +468,14 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const searchedData=searchNorm?baseData.filter(p=>matchesSearch(p,searchNorm)):baseData;
   const filtered=filter==="all"?searchedData:searchedData.filter(p=>p.estado===filter);
   const inReportMonth=(value: unknown) => typeof value==="string" && value.slice(0,7)===reportMonth;
-  // Estadísticas del reporte mensual: incluyen archivados (dato contable real). El listado de tarjetas (baseData) sí filtra archivado_at.
-  const acceptedMonth=data.filter(p=>p.estado==="aceptado"&&inReportMonth(p.aceptado_at||p.estado_updated_at||p.fecha));
-  const rejectedMonth=data.filter(p=>p.estado==="rechazado"&&inReportMonth(p.rechazado_at||p.estado_updated_at||p.fecha));
-  const pendingMonth=data.filter(p=>p.estado==="pendiente"&&inReportMonth(p.fecha||p.created_at));
-  const enviadoMonth=data.filter(p=>p.estado==="enviado"&&inReportMonth(p.estado_updated_at||p.fecha||p.created_at));
-  const createdMonth=data.filter(p=>inReportMonth(p.fecha||p.created_at));
+  // Estadísticas del reporte mensual: filtran por fecha del registro (no por cuándo se tocó el estado,
+  // que puede quedar desfasado por archivado masivo de pendientes viejos). Incluyen archivados del mes.
+  // El listado de tarjetas (baseData) sí filtra archivado_at.
+  const acceptedMonth=data.filter(p=>p.estado==="aceptado"&&inReportMonth(p.fecha));
+  const rejectedMonth=data.filter(p=>p.estado==="rechazado"&&inReportMonth(p.fecha));
+  const pendingMonth=data.filter(p=>p.estado==="pendiente"&&inReportMonth(p.fecha));
+  const enviadoMonth=data.filter(p=>p.estado==="enviado"&&inReportMonth(p.fecha));
+  const createdMonth=data.filter(p=>inReportMonth(p.fecha));
   const acceptedTotal=acceptedMonth.reduce((a,p)=>a+Number(p.importe||0),0);
   const rejectedTotal=rejectedMonth.reduce((a,p)=>a+Number(p.importe||0),0);
   const enJuegoTotal=enviadoMonth.reduce((a,p)=>a+Number(p.importe||0),0);
