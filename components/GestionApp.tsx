@@ -185,7 +185,7 @@ const calcTotalItems = (items: Item[]) => items.reduce((a,i)=>a+i.cantidad*i.pre
 const monthKey  = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
 const monthName = (m: string) => new Date(`${m}-01T12:00:00`).toLocaleDateString("es-ES",{month:"long",year:"numeric"});
 const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
-const matchesSearch = (r: Record<string,unknown>, normQuery: string) => normalize([r.cliente,r.direccion,r.zona,r.acceso].filter(Boolean).join(" ")).includes(normQuery);
+const matchesSearch = (r: Record<string,unknown>, normQuery: string) => normalize([r.cliente,r.direccion,r.zona,r.acceso,r.telefono].filter(Boolean).join(" ")).includes(normQuery);
 
 const S = {
   input:    {width:"100%",background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,color:"#EEF2FF",padding:"10px 12px",fontSize:15,boxSizing:"border-box" as const,fontFamily:"inherit",outline:"none"},
@@ -356,6 +356,10 @@ function MapsLink({direccion}:{direccion?:string}) {
   if(!direccion) return null;
   return <a href={mapsUrl(direccion)} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,textDecoration:"none",border:"1px solid #1A3A7A"}}><span style={{fontSize:18}}>📍</span><span style={{fontSize:13,color:"#93B4E8",flex:1}}>{direccion}</span><span style={{fontSize:11,color:ACCENT,fontWeight:700}}>MAPS →</span></a>;
 }
+function PhoneLink({telefono}:{telefono?:string}) {
+  if(!telefono) return null;
+  return <a href={`tel:${telefono}`} style={{display:"flex",alignItems:"center",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,textDecoration:"none",border:"1px solid #1A3A7A"}}><span style={{fontSize:18}}>📞</span><span style={{fontSize:13,color:"#93B4E8",flex:1}}>{telefono}</span><span style={{fontSize:11,color:ACCENT,fontWeight:700}}>LLAMAR →</span></a>;
+}
 function ExpandableNote({text}:{text:string}) {
   const [exp,setExp]=useState(false);
   const long=text.length>80;
@@ -451,7 +455,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const [reportMonth,setReportMonth]=useState(monthKey());
   const [showArchived,setShowArchived]=useState(false);
   const [search,setSearch]=useState("");
-  const blank={cliente:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",tiene_iva:false,email_cliente:"",direccion_cliente:"",nif_cliente:""};
+  const blank={cliente:"",telefono:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",tiene_iva:false,email_cliente:"",direccion_cliente:"",nif_cliente:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
 
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("presupuestos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
@@ -464,13 +468,15 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const searchedData=searchNorm?baseData.filter(p=>matchesSearch(p,searchNorm)):baseData;
   const filtered=filter==="all"?searchedData:searchedData.filter(p=>p.estado===filter);
   const inReportMonth=(value: unknown) => typeof value==="string" && value.slice(0,7)===reportMonth;
-  const acceptedMonth=activeData.filter(p=>p.estado==="aceptado"&&inReportMonth(p.aceptado_at||p.estado_updated_at||p.fecha));
-  const rejectedMonth=activeData.filter(p=>p.estado==="rechazado"&&inReportMonth(p.rechazado_at||p.estado_updated_at||p.fecha));
-  const pendingMonth=activeData.filter(p=>p.estado==="pendiente"&&inReportMonth(p.fecha||p.created_at));
-  const createdMonth=activeData.filter(p=>inReportMonth(p.fecha||p.created_at));
+  // Estadísticas del reporte mensual: incluyen archivados (dato contable real). El listado de tarjetas (baseData) sí filtra archivado_at.
+  const acceptedMonth=data.filter(p=>p.estado==="aceptado"&&inReportMonth(p.aceptado_at||p.estado_updated_at||p.fecha));
+  const rejectedMonth=data.filter(p=>p.estado==="rechazado"&&inReportMonth(p.rechazado_at||p.estado_updated_at||p.fecha));
+  const pendingMonth=data.filter(p=>p.estado==="pendiente"&&inReportMonth(p.fecha||p.created_at));
+  const enviadoMonth=data.filter(p=>p.estado==="enviado"&&inReportMonth(p.estado_updated_at||p.fecha||p.created_at));
+  const createdMonth=data.filter(p=>inReportMonth(p.fecha||p.created_at));
   const acceptedTotal=acceptedMonth.reduce((a,p)=>a+Number(p.importe||0),0);
   const rejectedTotal=rejectedMonth.reduce((a,p)=>a+Number(p.importe||0),0);
-  const pendingTotal=pendingMonth.reduce((a,p)=>a+Number(p.importe||0),0);
+  const enJuegoTotal=enviadoMonth.reduce((a,p)=>a+Number(p.importe||0),0);
   const decidedMonth=acceptedMonth.length+rejectedMonth.length;
   const acceptanceRate=decidedMonth?Math.round((acceptedMonth.length/decidedMonth)*100):0;
 
@@ -549,7 +555,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
         <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>Aceptado</div><div style={{fontSize:18,color:"#059669",fontWeight:800}}>{acceptedTotal.toFixed(2)}€</div></div>
-        <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>En juego</div><div style={{fontSize:18,color:"#D97706",fontWeight:800}}>{pendingTotal.toFixed(2)}€</div></div>
+        <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>En juego</div><div style={{fontSize:18,color:"#D97706",fontWeight:800}}>{enJuegoTotal.toFixed(2)}€</div></div>
         <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>Desestimado</div><div style={{fontSize:18,color:"#DC2626",fontWeight:800}}>{rejectedTotal.toFixed(2)}€</div></div>
         <div style={{background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:11,color:"#7AA0D4",fontWeight:700,letterSpacing:0.4,textTransform:"uppercase",marginBottom:4}}>Conversión</div><div style={{fontSize:18,color:ACCENT,fontWeight:800}}>{decidedMonth?`${acceptanceRate}%`:"—"}</div></div>
       </div>
@@ -577,6 +583,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     <ArchiveToggleButton active={showArchived} onClick={()=>setShowArchived(a=>!a)}/>
     {detail&&<Modal title="Presupuesto" onClose={()=>setDetail(null)}>
       <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{detail.cliente as string}</div><div style={{fontSize:14,color:"#7AA0D4"}}>{detail.servicio as string} · {detail.zona as string}</div></div>
+      <PhoneLink telefono={detail.telefono as string}/>
       <MapsLink direccion={detail.direccion as string}/>
       {!!detail.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{detail.acceso as string}</span></div>}
       <div style={{background:"#0D2259",borderRadius:10,padding:14,marginBottom:14}}>
@@ -594,6 +601,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     </Modal>}
     {showForm&&<Modal title={editing?"Editar presupuesto":"Nuevo presupuesto"} onClose={()=>setShowForm(false)}>
       <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre del cliente"/></Field>
+      <Field label="Teléfono"><input style={S.input} type="tel" value={(form.telefono as string)||""} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="+34 600 000 000"/></Field>
       <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e=>setForm({...form,zona:e.target.value})}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></Field>
       <DireccionField value={(form.direccion as string)||""} onChange={v=>setForm({...form,direccion:v})}/>
       <Field label="Acceso / indicaciones"><textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={(form.acceso as string)||""} onChange={e=>setForm({...form,acceso:e.target.value})} placeholder="Ej: Escalera B, 3º Izq · Timbre no funciona · Aparcar en Calle Mayor"/></Field>
@@ -686,11 +694,11 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const [facturaItems,setFacturaItems]=useState<Item[]>([]);
   const [showArchived,setShowArchived]=useState(false);
   const [search,setSearch]=useState("");
-  const blank={cliente:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",hora_inicio:"",email_cliente:"",direccion_cliente:"",nif_cliente:"",tiene_iva:false,importe:""};
+  const blank={cliente:"",telefono:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",hora_inicio:"",email_cliente:"",direccion_cliente:"",nif_cliente:"",tiene_iva:false,importe:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("trabajos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
   useEffect(()=>{load();},[load]);
-  useEffect(()=>{if(!precargar)return;setForm({...blank,cliente:precargar.cliente,zona:precargar.zona,direccion:precargar.direccion||"",acceso:precargar.acceso||"",servicio:precargar.servicio,nota:precargar.nota||"",email_cliente:precargar.email_cliente||"",tiene_iva:precargar.tiene_iva||false,importe:precargar.importe||""});setEditing(null);setShowForm(true);},[precargar]);
+  useEffect(()=>{if(!precargar)return;setForm({...blank,cliente:precargar.cliente,telefono:precargar.telefono||"",zona:precargar.zona,direccion:precargar.direccion||"",acceso:precargar.acceso||"",servicio:precargar.servicio,nota:precargar.nota||"",email_cliente:precargar.email_cliente||"",tiene_iva:precargar.tiene_iva||false,importe:precargar.importe||""});setEditing(null);setShowForm(true);},[precargar]);
   const activeData=data.filter(t=>!t.archivado_at);
   const archivedData=data.filter(t=>t.archivado_at);
   const baseData=showArchived?archivedData:activeData;
@@ -740,6 +748,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
     <ArchiveToggleButton active={showArchived} onClick={()=>setShowArchived(a=>!a)}/>
     {detail&&<Modal title="Trabajo" onClose={()=>setDetail(null)}>
       <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{detail.cliente as string}</div><div style={{fontSize:14,color:"#7AA0D4"}}>{detail.servicio as string} · {detail.zona as string} · {fmt(detail.fecha as string)}{detail.hora_inicio?` · 🕐 ${detail.hora_inicio as string}`:""}</div></div>
+      <PhoneLink telefono={detail.telefono as string}/>
       <MapsLink direccion={detail.direccion as string}/>
       {!!detail.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{detail.acceso as string}</span></div>}
       {detail.nota&&<ExpandableNote text={detail.nota as string}/>}
@@ -753,6 +762,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
     </Modal>}
     {showForm&&<Modal title={editing?"Editar trabajo":"Nuevo trabajo"} onClose={()=>setShowForm(false)}>
       <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre del cliente"/></Field>
+      <Field label="Teléfono"><input style={S.input} type="tel" value={(form.telefono as string)||""} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="+34 600 000 000"/></Field>
       <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e=>setForm({...form,zona:e.target.value})}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></Field>
       <DireccionField value={(form.direccion as string)||""} onChange={v=>setForm({...form,direccion:v})}/>
       <Field label="Acceso / indicaciones"><textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={(form.acceso as string)||""} onChange={e=>setForm({...form,acceso:e.target.value})} placeholder="Ej: Escalera B, 3º Izq · Timbre no funciona · Aparcar en Calle Mayor"/></Field>
