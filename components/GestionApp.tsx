@@ -187,6 +187,61 @@ const monthName = (m: string) => new Date(`${m}-01T12:00:00`).toLocaleDateString
 const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
 const matchesSearch = (r: Record<string,unknown>, normQuery: string) => normalize([r.cliente,r.direccion,r.zona,r.acceso,r.telefono].filter(Boolean).join(" ")).includes(normQuery);
 
+// ─── Ordenamiento ──────────────────────────────────────────────────────────────
+// La query a Supabase siempre viene en created_at.desc (orden de carga), que no
+// sirve para leer una agenda. El orden visible se decide en cliente y se guarda
+// en localStorage para que la recepción no lo tenga que reelegir en cada visita.
+const SORT_T: [string,string][] = [["fecha_asc","Fecha ↑"],["fecha_desc","Fecha ↓"],["cliente","Cliente"]];
+const SORT_P: [string,string][] = [["fecha_desc","Recientes"],["fecha_asc","Antiguos"],["cliente","Cliente"],["importe","Importe"]];
+
+const cmpCliente = (a: Record<string,unknown>, b: Record<string,unknown>) =>
+  normalize(String(a.cliente||"")).localeCompare(normalize(String(b.cliente||"")));
+
+// Dentro de un mismo día la hora siempre va ascendente, incluso ordenando por
+// fecha descendente: un día se lee de la mañana a la tarde.
+const cmpFecha = (dir: 1|-1) => (a: Record<string,unknown>, b: Record<string,unknown>) => {
+  const fa = String(a.fecha||""), fb = String(b.fecha||"");
+  if (fa !== fb) return (fa < fb ? -1 : 1) * dir;
+  return ordenarPorHora(a, b);
+};
+
+function ordenarRegistros(rows: Record<string,unknown>[], sort: string): Record<string,unknown>[] {
+  const r = [...rows];
+  if (sort === "cliente") return r.sort(cmpCliente);
+  if (sort === "importe") return r.sort((a,b)=>Number(b.importe||0)-Number(a.importe||0));
+  return r.sort(cmpFecha(sort === "fecha_asc" ? 1 : -1));
+}
+
+function agruparPorFecha(rows: Record<string,unknown>[]): { fecha: string; rows: Record<string,unknown>[] }[] {
+  const groups: { fecha: string; rows: Record<string,unknown>[] }[] = [];
+  for (const r of rows) {
+    const f = String(r.fecha||"");
+    const last = groups[groups.length-1];
+    if (last && last.fecha === f) last.rows.push(r);
+    else groups.push({ fecha: f, rows: [r] });
+  }
+  return groups;
+}
+
+function etiquetaDia(iso: string): string {
+  if (!iso) return "Sin fecha";
+  const hoy = toISODate(new Date());
+  if (iso === hoy) return "HOY";
+  if (iso === toISODate(addDays(new Date(), 1))) return "MAÑANA";
+  if (iso === toISODate(addDays(new Date(), -1))) return "AYER";
+  const d = new Date(iso + "T12:00:00");
+  return `${DIAS_ABR[d.getDay()]} ${d.getDate()} ${MESES_ABR[d.getMonth()]}`;
+}
+
+// Rango horario estimado a partir de hora_inicio + duración típica del servicio.
+function rangoHorario(t: Record<string,unknown>): string | null {
+  const h = t.hora_inicio as string | null;
+  if (!h) return null;
+  const fin = horaAMinutos(h) + (DURACION_MIN[t.servicio as string] || 60);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${h} – ${pad(Math.floor(fin/60) % 24)}:${pad(fin % 60)}`;
+}
+
 const S = {
   input:    {width:"100%",background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,color:"#EEF2FF",padding:"10px 12px",fontSize:15,boxSizing:"border-box" as const,fontFamily:"inherit",outline:"none"},
   select:   {width:"100%",background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,color:"#EEF2FF",padding:"10px 12px",fontSize:15,boxSizing:"border-box" as const,fontFamily:"inherit",outline:"none"},
@@ -352,6 +407,33 @@ function SearchInput({value,onChange,placeholder}:{value:string;onChange:(v:stri
 function FilterPills({options,active,onChange}:{options:[string,string][];active:string;onChange:(k:string)=>void}) {
   return <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:14,paddingBottom:4}}>{options.map(([k,label])=><button key={k} onClick={()=>onChange(k)} style={{border:"none",borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",background:active===k?ACCENT:"#0D2259",color:active===k?"#fff":"#7AA0D4"}}>{label}</button>)}</div>;
 }
+function SortBar({options,active,onChange}:{options:[string,string][];active:string;onChange:(k:string)=>void}) {
+  return <div style={{display:"flex",gap:6,alignItems:"center",overflowX:"auto",marginBottom:14,paddingBottom:2}}>
+    <span style={{fontSize:10,color:"#7AA0D4",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0,marginRight:2}}>Orden</span>
+    {options.map(([k,label])=><button key={k} onClick={()=>onChange(k)} style={{border:`1px solid ${active===k?ACCENT:"#1A3A7A"}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",background:active===k?ACCENT+"22":"transparent",color:active===k?ACCENT:"#7AA0D4"}}>{label}</button>)}
+  </div>;
+}
+// Preferencia de orden persistida. Se lee en un effect (no en el inicializador de
+// useState) para no romper la hidratación de Next: el server no tiene localStorage.
+function useSort(storageKey: string, def: string): [string, (v: string) => void] {
+  const [sort,setSort]=useState(def);
+  useEffect(()=>{try{const v=localStorage.getItem(storageKey);if(v)setSort(v);}catch{}},[storageKey]);
+  const update=useCallback((v:string)=>{setSort(v);try{localStorage.setItem(storageKey,v);}catch{}},[storageKey]);
+  return [sort,update];
+}
+function DateGroupHeader({fecha}:{fecha:string}) {
+  const esHoy=fecha===toISODate(new Date());
+  return <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,marginBottom:2}}>
+    <span style={{fontSize:11,fontWeight:800,letterSpacing:0.8,textTransform:"uppercase",color:esHoy?"#60a5fa":"#7AA0D4",whiteSpace:"nowrap"}}>{etiquetaDia(fecha)}</span>
+    <div style={{flex:1,height:1,background:esHoy?"#60a5fa33":"#1A3A7A"}}/>
+  </div>;
+}
+function InfoChip({label,value,color="#EEF2FF"}:{label:string;value:string;color?:string}) {
+  return <div style={{flex:1,background:"#0D2259",border:"1px solid #1A3A7A",borderRadius:10,padding:"8px 10px",minWidth:0}}>
+    <div style={{fontSize:10,color:"#7AA0D4",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:2}}>{label}</div>
+    <div style={{fontSize:13,color,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{value}</div>
+  </div>;
+}
 function MapsLink({direccion}:{direccion?:string}) {
   if(!direccion) return null;
   return <a href={mapsUrl(direccion)} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,textDecoration:"none",border:"1px solid #1A3A7A"}}><span style={{fontSize:18}}>📍</span><span style={{fontSize:13,color:"#93B4E8",flex:1}}>{direccion}</span><span style={{fontSize:11,color:ACCENT,fontWeight:700}}>MAPS →</span></a>;
@@ -446,6 +528,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const [editing,setEditing]=useState<Record<string,unknown>|null>(null);
   const [filter,setFilter]=useState("all");
   const [detail,setDetail]=useState<Record<string,unknown>|null>(null);
+  const [detailItems,setDetailItems]=useState<Item[]|null>(null);
   const [saving,setSaving]=useState(false);
   const [confirmDel,setConfirmDel]=useState<string|null>(null);
   const [confirmTrabajo,setConfirmTrabajo]=useState<Record<string,unknown>|null>(null);
@@ -455,7 +538,8 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const [reportMonth,setReportMonth]=useState(monthKey());
   const [showArchived,setShowArchived]=useState(false);
   const [search,setSearch]=useState("");
-  const blank={cliente:"",telefono:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",tiene_iva:false,email_cliente:"",direccion_cliente:"",nif_cliente:""};
+  const [sort,setSort]=useSort("bayres.sort.presupuestos","fecha_desc");
+  const blank={cliente:"",telefono:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:toISODate(new Date()),nota:"",tiene_iva:false,email_cliente:"",direccion_cliente:"",nif_cliente:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
 
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("presupuestos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
@@ -466,7 +550,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const baseData=showArchived?archivedData:activeData;
   const searchNorm=normalize(search.trim());
   const searchedData=searchNorm?baseData.filter(p=>matchesSearch(p,searchNorm)):baseData;
-  const filtered=filter==="all"?searchedData:searchedData.filter(p=>p.estado===filter);
+  const filtered=ordenarRegistros(filter==="all"?searchedData:searchedData.filter(p=>p.estado===filter),sort);
   const inReportMonth=(value: unknown) => typeof value==="string" && value.slice(0,7)===reportMonth;
   // Estadísticas del reporte mensual: filtran por fecha del registro (no por cuándo se tocó el estado,
   // que puede quedar desfasado por archivado masivo de pendientes viejos). Incluyen archivados del mes.
@@ -483,6 +567,11 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
   const acceptanceRate=decidedMonth?Math.round((acceptedMonth.length/decidedMonth)*100):0;
 
   const openNew=()=>{setEditing(null);setForm(blank);setItems([{...ITEM_BLANK}]);setShowForm(true);};
+  // El detalle carga los items para poder leer el desglose sin entrar a editar.
+  const openDetail=async(p:Record<string,unknown>)=>{
+    setDetail(p);setDetailItems(null);
+    try{setDetailItems(await dbGet("presupuesto_items",`&presupuesto_id=eq.${p.id}&order=orden.asc`));}catch{setDetailItems([]);}
+  };
   const openEdit=async(p:Record<string,unknown>)=>{
     setEditing(p);setForm({...p});
     try{const ei=await dbGet("presupuesto_items",`&presupuesto_id=eq.${p.id}&order=orden.asc`);setItems(ei.length>0?ei:[{...ITEM_BLANK}]);}catch{setItems([{...ITEM_BLANK}]);}
@@ -565,10 +654,11 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
     </div>
     <SearchInput value={search} onChange={setSearch} placeholder="Buscar cliente, dirección..."/>
     <FilterPills options={[["all","Todos"],...Object.entries(ESTADOS_P).map(([k,v])=>[k,v.label] as [string,string])]} active={filter} onChange={setFilter}/>
+    <SortBar options={SORT_P} active={sort} onChange={setSort}/>
     {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {filtered.length===0&&<Empty/>}
       {filtered.map(p=>(
-        <div key={p.id as string} onClick={()=>setDetail(p)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer",opacity:p.archivado_at?0.6:1}}>
+        <div key={p.id as string} onClick={()=>openDetail(p)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer",opacity:p.archivado_at?0.6:1}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:6}}>
             <div style={{minWidth:0}}>
               <div style={{fontWeight:700,fontSize:15,color:"#EEF2FF"}}>{p.cliente as string}</div>
@@ -589,6 +679,13 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
       <MapsLink direccion={detail.direccion as string}/>
       {!!detail.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{detail.acceso as string}</span></div>}
       <div style={{background:"#0D2259",borderRadius:10,padding:14,marginBottom:14}}>
+        {detailItems===null
+          ? <div style={{fontSize:12,color:"#3A5A9A",marginBottom:8}}>Cargando items...</div>
+          : detailItems.length>0&&<div style={{marginBottom:10,paddingBottom:8,borderBottom:"1px solid #1A3A7A"}}>{detailItems.map((it,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:4}}>
+                <span style={{color:"#93B4E8",fontSize:13,minWidth:0}}>{Number(it.cantidad)>1?`${Number(it.cantidad)}× `:""}{it.descripcion}</span>
+                <span style={{color:"#EEF2FF",fontSize:13,flexShrink:0}}>{(Number(it.cantidad)*Number(it.precio_unitario)).toFixed(2)}€</span>
+              </div>))}</div>}
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:"#7AA0D4",fontSize:13}}>Total {detail.tiene_iva?"(c/IVA)":"(sin IVA)"}</span><span style={{color:ACCENT,fontWeight:800,fontSize:16}}>{detail.importe?`${Number(detail.importe).toFixed(2)}€`:"—"}</span></div>
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:"#7AA0D4",fontSize:13}}>Fecha</span><span style={{color:"#EEF2FF",fontSize:13}}>{fmt(detail.fecha as string)}</span></div>
       </div>
@@ -681,6 +778,72 @@ function MaterialesTab() {
   </div>;
 }
 
+// ─── Detalle / formulario de trabajo (compartido por Trabajos y Agenda) ────────
+function DetalleTrabajo({t}:{t:Record<string,unknown>}) {
+  const rango=rangoHorario(t);
+  return <>
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{t.cliente as string}</div>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+        <Badge estado={t.estado as string} map={ESTADOS_T}/>
+        <span style={{fontSize:13,color:"#7AA0D4"}}>{t.servicio as string} · {t.zona as string}</span>
+        {!!t.archivado_at&&<span style={{background:"#6B728022",color:"#9CA3AF",border:"1px solid #6B728044",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:0.4}}>ARCHIVADO</span>}
+      </div>
+    </div>
+    <div style={{display:"flex",gap:8,marginBottom:14}}>
+      <InfoChip label="Fecha" value={fmt(t.fecha as string)}/>
+      <InfoChip label="Horario" value={rango||"Sin hora"} color={rango?"#EEF2FF":"#7AA0D4"}/>
+      <InfoChip label="Importe" value={t.importe?`${Number(t.importe).toFixed(2)}€`:"—"} color={t.importe?ACCENT:"#7AA0D4"}/>
+    </div>
+    <PhoneLink telefono={t.telefono as string}/>
+    <MapsLink direccion={t.direccion as string}/>
+    {!!t.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{t.acceso as string}</span></div>}
+    {!!t.nota&&<ExpandableNote text={t.nota as string}/>}
+  </>;
+}
+
+function TrabajoCard({t,onClick,mostrarFecha}:{t:Record<string,unknown>;onClick:()=>void;mostrarFecha:boolean}) {
+  const rango=rangoHorario(t);
+  return <div onClick={onClick} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer",opacity:t.archivado_at?0.6:1}}>
+    <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:6}}>
+      <div style={{minWidth:0}}>
+        <div style={{fontWeight:700,fontSize:15,color:"#EEF2FF"}}>{t.cliente as string}</div>
+        {!!t.direccion&&<div style={{fontSize:12,color:"#7AA0D4",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.direccion as string}</div>}
+      </div>
+      <div style={{textAlign:"right",flexShrink:0}}>
+        <span style={{fontSize:13,color:rango?ACCENT:"#3A5A9A",fontWeight:rango?700:400,whiteSpace:"nowrap"}}>{rango?`🕐 ${rango}`:"sin hora"}</span>
+        {mostrarFecha&&<span style={{display:"block",fontSize:11,color:"#3A5A9A",marginTop:2}}>{fmt(t.fecha as string)}</span>}
+      </div>
+    </div>
+    <div style={{fontSize:13,color:"#7AA0D4",marginBottom:8}}>{t.servicio as string} · {t.zona as string}</div>
+    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+      <Badge estado={t.estado as string} map={ESTADOS_T}/>
+      {!!t.acceso&&<Info size={14} color="#7AA0D4"/>}
+      {!!t.archivado_at&&<span style={{background:"#6B728022",color:"#9CA3AF",border:"1px solid #6B728044",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:0.4}}>ARCHIVADO</span>}
+    </div>
+  </div>;
+}
+
+function EstadoSelector({estado,onChange}:{estado:string;onChange:(k:string)=>void}) {
+  return <Field label="Cambiar estado"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>{Object.entries(ESTADOS_T).map(([k,v])=><button key={k} onClick={()=>onChange(k)} style={{border:`1px solid ${v.color}55`,borderRadius:8,padding:"8px 6px",background:estado===k?v.color+"22":"transparent",color:v.color,fontSize:12,fontWeight:700,cursor:"pointer"}}>{v.label}</button>)}</div></Field>;
+}
+
+function TrabajoFormFields({form,setForm}:{form:Record<string,unknown>;setForm:(f:Record<string,unknown>)=>void}) {
+  return <>
+    <Field label="Cliente"><input style={S.input} value={(form.cliente as string)||""} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre del cliente"/></Field>
+    <Field label="Teléfono"><input style={S.input} type="tel" value={(form.telefono as string)||""} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="+34 600 000 000"/></Field>
+    <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e=>setForm({...form,zona:e.target.value})}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></Field>
+    <DireccionField value={(form.direccion as string)||""} onChange={v=>setForm({...form,direccion:v})}/>
+    <Field label="Acceso / indicaciones"><textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={(form.acceso as string)||""} onChange={e=>setForm({...form,acceso:e.target.value})} placeholder="Ej: Escalera B, 3º Izq · Timbre no funciona · Aparcar en Calle Mayor"/></Field>
+    <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e=>setForm({...form,servicio:e.target.value})}>{SERVICIOS.map(s=><option key={s}>{s}</option>)}</select></Field>
+    <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e=>setForm({...form,estado:e.target.value})}>{Object.entries(ESTADOS_T).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
+    <Field label="Fecha"><input style={S.input} type="date" value={(form.fecha as string)||""} onChange={e=>setForm({...form,fecha:e.target.value})}/></Field>
+    <Field label={`Hora de inicio${form.servicio?` (≈${DURACION_MIN[form.servicio as string]||60} min)`:""}`}><input style={S.input} type="time" value={(form.hora_inicio as string)||""} onChange={e=>setForm({...form,hora_inicio:e.target.value})}/></Field>
+    <Field label="Importe (€)"><input style={S.input} type="number" value={(form.importe as string)||""} onChange={e=>setForm({...form,importe:e.target.value})} placeholder="0"/></Field>
+    <Field label="Nota"><textarea style={{...S.input,minHeight:70,resize:"vertical"}} value={(form.nota as string)||""} onChange={e=>setForm({...form,nota:e.target.value})} placeholder="Observaciones, acceso, materiales..."/></Field>
+  </>;
+}
+
 // ─── TRABAJOS ──────────────────────────────────────────────────────────────────
 function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const [data,setData]=useState<Record<string,unknown>[]>([]);
@@ -696,7 +859,8 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const [facturaItems,setFacturaItems]=useState<Item[]>([]);
   const [showArchived,setShowArchived]=useState(false);
   const [search,setSearch]=useState("");
-  const blank={cliente:"",telefono:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:new Date().toISOString().slice(0,10),nota:"",hora_inicio:"",email_cliente:"",direccion_cliente:"",nif_cliente:"",tiene_iva:false,importe:""};
+  const [sort,setSort]=useSort("bayres.sort.trabajos","fecha_asc");
+  const blank={cliente:"",telefono:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:toISODate(new Date()),nota:"",hora_inicio:"",email_cliente:"",direccion_cliente:"",nif_cliente:"",tiene_iva:false,importe:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("trabajos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
   useEffect(()=>{load();},[load]);
@@ -706,9 +870,15 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const baseData=showArchived?archivedData:activeData;
   const searchNorm=normalize(search.trim());
   const searchedData=searchNorm?baseData.filter(t=>matchesSearch(t,searchNorm)):baseData;
-  const filtered=filter==="all"?searchedData:searchedData.filter(t=>t.estado===filter);
+  const filteredRaw=filter==="all"?searchedData:searchedData.filter(t=>t.estado===filter);
+  const filtered=ordenarRegistros(filteredRaw,sort);
+  // Con orden por fecha las tarjetas van agrupadas bajo una cabecera de día
+  // (HOY / MAÑANA / Vie 12 sep); con orden por cliente el agrupado no aporta.
+  const grupos=sort==="cliente"?null:agruparPorFecha(filtered);
+  const todayISO=toISODate(new Date());
   const enCurso=activeData.filter(t=>t.estado==="en_curso").length;
-  const hoy=activeData.filter(t=>t.fecha===new Date().toISOString().slice(0,10)).length;
+  const hoy=activeData.filter(t=>t.fecha===todayISO).length;
+  const atrasados=activeData.filter(t=>(t.estado==="pendiente"||t.estado==="en_curso")&&String(t.fecha||"")<todayISO).length;
   const openNew=()=>{setEditing(null);setForm(blank);setShowForm(true);};
   const openEdit=(t:Record<string,unknown>)=>{setEditing(t);setForm({...t});setShowForm(true);setDetail(null);};
   const submit=async()=>{if(!(form.cliente as string).trim())return;setSaving(true);try{if(editing){const u=await dbUpdate("trabajos",editing.id as string,form);setData(d=>d.map(t=>t.id===editing.id?u:t));}else{const u=await dbInsert("trabajos",form);setData(d=>[u,...d]);}setShowForm(false);}catch(e){setErr((e as Error).message);}finally{setSaving(false);}};
@@ -727,34 +897,28 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
     {err&&<ErrBanner msg={err} onClose={()=>setErr(null)}/>}
     {confirmDel&&<ConfirmModal msg="¿Eliminar este trabajo?" onConfirm={()=>del(confirmDel)} onCancel={()=>setConfirmDel(null)}/>}
     {showFactura&&<FacturaModal registro={showFactura} tipo="FV" items={facturaItems} onClose={()=>setShowFactura(null)}/>}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
       <StatCard label="En curso" value={enCurso} color={ACCENT}/>
       <StatCard label="Hoy" value={hoy} color="#059669"/>
+      <StatCard label="Atrasados" value={atrasados} color="#DC2626"/>
     </div>
     <SearchInput value={search} onChange={setSearch} placeholder="Buscar cliente, dirección..."/>
     <FilterPills options={[["all","Todos"],...Object.entries(ESTADOS_T).map(([k,v])=>[k,v.label] as [string,string])]} active={filter} onChange={setFilter}/>
+    <SortBar options={SORT_T} active={sort} onChange={setSort}/>
     {loading?<Spinner/>:<div className="gestion-record-list" style={{display:"flex",flexDirection:"column",gap:8}}>
       {filtered.length===0&&<Empty/>}
-      {filtered.map(t=>(
-        <div key={t.id as string} onClick={()=>setDetail(t)} style={{background:"#0A1F4E",border:"1px solid #1A3A7A",borderRadius:14,padding:14,cursor:"pointer",opacity:t.archivado_at?0.6:1}}>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-            <span style={{fontWeight:700,fontSize:15,color:"#EEF2FF"}}>{t.cliente as string}</span>
-            <div style={{textAlign:"right"}}><span style={{fontSize:12,color:"#3A5A9A"}}>{fmt(t.fecha as string)}</span>{t.hora_inicio&&<span style={{display:"block",fontSize:11,color:"#7AA0D4"}}>🕐 {t.hora_inicio as string}</span>}</div>
-          </div>
-          <div style={{fontSize:13,color:"#7AA0D4",marginBottom:8}}>{t.servicio as string} · {t.zona as string}</div>
-          <div style={{display:"flex",gap:6,alignItems:"center"}}><Badge estado={t.estado as string} map={ESTADOS_T}/>{!!t.archivado_at&&<span style={{background:"#6B728022",color:"#9CA3AF",border:"1px solid #6B728044",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:0.4}}>ARCHIVADO</span>}</div>
-        </div>
-      ))}
+      {grupos
+        ? grupos.map(g=><div key={g.fecha||"sin-fecha"} style={{display:"flex",flexDirection:"column",gap:8}}>
+            <DateGroupHeader fecha={g.fecha}/>
+            {g.rows.map(t=><TrabajoCard key={t.id as string} t={t} onClick={()=>setDetail(t)} mostrarFecha={false}/>)}
+          </div>)
+        : filtered.map(t=><TrabajoCard key={t.id as string} t={t} onClick={()=>setDetail(t)} mostrarFecha/>)}
     </div>}
     <FAB onClick={openNew}/>
     <ArchiveToggleButton active={showArchived} onClick={()=>setShowArchived(a=>!a)}/>
     {detail&&<Modal title="Trabajo" onClose={()=>setDetail(null)}>
-      <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{detail.cliente as string}</div><div style={{fontSize:14,color:"#7AA0D4"}}>{detail.servicio as string} · {detail.zona as string} · {fmt(detail.fecha as string)}{detail.hora_inicio?` · 🕐 ${detail.hora_inicio as string}`:""}</div></div>
-      <PhoneLink telefono={detail.telefono as string}/>
-      <MapsLink direccion={detail.direccion as string}/>
-      {!!detail.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{detail.acceso as string}</span></div>}
-      {detail.nota&&<ExpandableNote text={detail.nota as string}/>}
-      <Field label="Cambiar estado"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>{Object.entries(ESTADOS_T).map(([k,v])=><button key={k} onClick={()=>changeEstado(detail.id as string,k)} style={{border:`1px solid ${v.color}55`,borderRadius:8,padding:"8px 6px",background:detail.estado===k?v.color+"22":"transparent",color:v.color,fontSize:12,fontWeight:700,cursor:"pointer"}}>{v.label}</button>)}</div></Field>
+      <DetalleTrabajo t={detail}/>
+      <EstadoSelector estado={detail.estado as string} onChange={k=>changeEstado(detail.id as string,k)}/>
       <div style={{display:"flex",gap:8,marginTop:8}}>
         <button onClick={()=>openEdit(detail)} style={{...S.btnGhost,flex:1}}>✏️ Editar</button>
         <button onClick={()=>abrirFactura(detail)} style={{...S.btnGhost,flex:1}}>🧾 Factura</button>
@@ -763,17 +927,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
       </div>
     </Modal>}
     {showForm&&<Modal title={editing?"Editar trabajo":"Nuevo trabajo"} onClose={()=>setShowForm(false)}>
-      <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre del cliente"/></Field>
-      <Field label="Teléfono"><input style={S.input} type="tel" value={(form.telefono as string)||""} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="+34 600 000 000"/></Field>
-      <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e=>setForm({...form,zona:e.target.value})}>{ZONAS.map(z=><option key={z}>{z}</option>)}</select></Field>
-      <DireccionField value={(form.direccion as string)||""} onChange={v=>setForm({...form,direccion:v})}/>
-      <Field label="Acceso / indicaciones"><textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={(form.acceso as string)||""} onChange={e=>setForm({...form,acceso:e.target.value})} placeholder="Ej: Escalera B, 3º Izq · Timbre no funciona · Aparcar en Calle Mayor"/></Field>
-      <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e=>setForm({...form,servicio:e.target.value})}>{SERVICIOS.map(s=><option key={s}>{s}</option>)}</select></Field>
-      <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e=>setForm({...form,estado:e.target.value})}>{Object.entries(ESTADOS_T).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
-      <Field label="Fecha"><input style={S.input} type="date" value={form.fecha as string} onChange={e=>setForm({...form,fecha:e.target.value})}/></Field>
-      <Field label="Hora de inicio"><input style={S.input} type="time" value={(form.hora_inicio as string)||""} onChange={e=>setForm({...form,hora_inicio:e.target.value})}/></Field>
-      <Field label="Importe (€)"><input style={S.input} type="number" value={(form.importe as string)||""} onChange={e=>setForm({...form,importe:e.target.value})} placeholder="0"/></Field>
-      <Field label="Nota"><textarea style={{...S.input,minHeight:70,resize:"vertical"}} value={form.nota as string} onChange={e=>setForm({...form,nota:e.target.value})} placeholder="Observaciones, acceso, materiales..."/></Field>
+      <TrabajoFormFields form={form} setForm={setForm}/>
       <button onClick={submit} disabled={saving} style={{...S.btnPrim,opacity:saving?0.7:1}}>{saving?"Guardando...":editing?"Guardar cambios":"Añadir trabajo"}</button>
     </Modal>}
   </div>;
@@ -823,6 +977,8 @@ function AgendaTab() {
   const [err, setErr] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [saving, setSaving] = useState(false);
   const [overlapWarning, setOverlapWarning] = useState<{ cliente: string; hora_inicio: string; servicio: string } | null>(null);
   const touchStartX = useRef<number | null>(null);
@@ -860,19 +1016,42 @@ function AgendaTab() {
   }, [rangeStart, rangeEnd]);
 
   const dias = Array.from({ length: 7 }, (_, i) => addDays(weekMonday, i));
-  const blank = { cliente: "", zona: ZONAS[0], direccion: "", servicio: SERVICIOS[0], estado: "pendiente", fecha: selectedDate || rangeStart, hora_inicio: "", nota: "" };
+  const blank = { cliente: "", telefono: "", zona: ZONAS[0], direccion: "", acceso: "", servicio: SERVICIOS[0], estado: "pendiente", fecha: selectedDate || rangeStart, hora_inicio: "", importe: "", nota: "" };
   const [form, setForm] = useState<Record<string, unknown>>(blank);
 
-  const openForm = () => { setForm({ ...blank, fecha: selectedDate || rangeStart }); setOverlapWarning(null); setShowForm(true); };
-  const doInsert = async () => {
+  // Reemplaza la fila en el mapa por fecha. Barre todas las fechas porque al
+  // editar un trabajo su 'fecha' puede haber cambiado de día.
+  const upsertLocal = (t: Record<string, unknown>) => setPorFecha(prev => {
+    const next: Record<string, Record<string, unknown>[]> = {};
+    for (const [k, v] of Object.entries(prev)) next[k] = v.filter(x => x.id !== t.id);
+    const f = t.fecha as string;
+    next[f] = [...(next[f] || []), t];
+    return next;
+  });
+
+  // Día por defecto al crear: el día abierto; si se crea desde la vista semanal,
+  // hoy cuando la semana mostrada lo contiene, y si no el lunes de esa semana.
+  const fechaPorDefecto = () => {
+    if (selectedDate) return selectedDate;
+    const hoy = toISODate(new Date());
+    return hoy >= rangeStart && hoy <= toISODate(weekSunday) ? hoy : rangeStart;
+  };
+  const openForm = (t?: Record<string, unknown>) => {
+    setEditing(t || null);
+    setForm(t ? { ...t } : { ...blank, fecha: fechaPorDefecto() });
+    setOverlapWarning(null);
+    setDetail(null);
+    setShowForm(true);
+  };
+  const guardar = async () => {
     setSaving(true);
     try {
-      const nuevo = await dbInsert("trabajos", form);
-      setPorFecha(prev => {
-        const f = nuevo.fecha as string;
-        return { ...prev, [f]: [...(prev[f] || []), nuevo] };
-      });
+      const guardado = editing
+        ? await dbUpdate("trabajos", editing.id as string, form)
+        : await dbInsert("trabajos", form);
+      upsertLocal(guardado);
       setShowForm(false);
+      setEditing(null);
       setOverlapWarning(null);
     } catch (e) { setErr((e as Error).message); }
     finally { setSaving(false); }
@@ -880,13 +1059,14 @@ function AgendaTab() {
   const submit = async () => {
     if (!(form.cliente as string).trim()) return;
     const horaInicio = (form.hora_inicio as string) || "";
-    if (!horaInicio) { await doInsert(); return; }
+    if (!horaInicio) { await guardar(); return; }
     setSaving(true);
     try {
-      const mismoDia: Record<string, unknown>[] = await dbGet("trabajos", `&fecha=eq.${form.fecha}&hora_inicio=not.is.null`);
+      const mismoDia: Record<string, unknown>[] = await dbGet("trabajos", `&fecha=eq.${form.fecha}&hora_inicio=not.is.null&archivado_at=is.null`);
       const nuevoInicio = horaAMinutos(horaInicio);
       const nuevoFin = nuevoInicio + (DURACION_MIN[form.servicio as string] || 60);
       const choque = mismoDia.find(t => {
+        if (editing && t.id === editing.id) return false;
         const ini = horaAMinutos(t.hora_inicio as string);
         const fin = ini + (DURACION_MIN[t.servicio as string] || 60);
         return nuevoInicio < fin && ini < nuevoFin;
@@ -894,27 +1074,37 @@ function AgendaTab() {
       setSaving(false);
       if (choque) { setOverlapWarning({ cliente: choque.cliente as string, hora_inicio: choque.hora_inicio as string, servicio: choque.servicio as string }); return; }
     } catch (e) { setSaving(false); setErr((e as Error).message); return; }
-    await doInsert();
+    await guardar();
+  };
+  const changeEstado = async (id: string, estado: string) => {
+    try {
+      const u = await dbUpdate("trabajos", id, { estado });
+      upsertLocal(u);
+      setDetail(d => d ? { ...d, ...u } : null);
+    } catch (e) { setErr((e as Error).message); }
   };
 
-  const formModal = showForm && <Modal title="Nuevo trabajo" onClose={() => setShowForm(false)}>
-    <Field label="Cliente"><input style={S.input} value={form.cliente as string} onChange={e => setForm({ ...form, cliente: e.target.value })} placeholder="Nombre del cliente" /></Field>
-    <Field label="Zona"><select style={S.select} value={form.zona as string} onChange={e => setForm({ ...form, zona: e.target.value })}>{ZONAS.map(z => <option key={z}>{z}</option>)}</select></Field>
-    <DireccionField value={(form.direccion as string) || ""} onChange={v => setForm({ ...form, direccion: v })} />
-    <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e => setForm({ ...form, servicio: e.target.value })}>{SERVICIOS.map(s => <option key={s}>{s}</option>)}</select></Field>
-    <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e => setForm({ ...form, estado: e.target.value })}>{Object.entries(ESTADOS_T).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></Field>
-    <Field label="Fecha"><input style={S.input} type="date" value={form.fecha as string} onChange={e => { setForm({ ...form, fecha: e.target.value }); setOverlapWarning(null); }} /></Field>
-    <Field label="Hora de inicio"><input style={S.input} type="time" value={(form.hora_inicio as string) || ""} onChange={e => { setForm({ ...form, hora_inicio: e.target.value }); setOverlapWarning(null); }} /></Field>
-    <Field label="Nota"><textarea style={{ ...S.input, minHeight: 70, resize: "vertical" }} value={form.nota as string} onChange={e => setForm({ ...form, nota: e.target.value })} placeholder="Observaciones, acceso, materiales..." /></Field>
+  // Al cambiar cualquier campo se limpia el aviso de solapamiento: puede haber
+  // dejado de aplicar (otro día, otra hora, otro servicio con otra duración).
+  const updateForm = (f: Record<string, unknown>) => { setForm(f); setOverlapWarning(null); };
+
+  const formModal = showForm && <Modal title={editing ? "Editar trabajo" : "Nuevo trabajo"} onClose={() => { setShowForm(false); setEditing(null); }}>
+    <TrabajoFormFields form={form} setForm={updateForm} />
     {overlapWarning ? <div style={{ background: "#78350F", border: "1px solid #D97706", borderRadius: 10, padding: "12px 14px" }}>
       <div style={{ fontSize: 13, color: "#FDE68A", marginBottom: 12, lineHeight: 1.5 }}>
         ⚠️ Posible solapamiento con {overlapWarning.cliente} ({overlapWarning.hora_inicio} - {overlapWarning.servicio}).<br />¿Querés confirmar igual?
       </div>
       <div style={{ display: "flex", gap: 10 }}>
         <button onClick={() => setOverlapWarning(null)} style={{ ...S.btnGhost, flex: 1 }}>Cancelar</button>
-        <button onClick={doInsert} disabled={saving} style={{ ...S.btnPrim, flex: 1, opacity: saving ? 0.7 : 1 }}>{saving ? "Guardando..." : "Confirmar igual"}</button>
+        <button onClick={guardar} disabled={saving} style={{ ...S.btnPrim, flex: 1, opacity: saving ? 0.7 : 1 }}>{saving ? "Guardando..." : "Confirmar igual"}</button>
       </div>
-    </div> : <button onClick={submit} disabled={saving} style={{ ...S.btnPrim, opacity: saving ? 0.7 : 1 }}>{saving ? "Guardando..." : "Añadir trabajo"}</button>}
+    </div> : <button onClick={submit} disabled={saving} style={{ ...S.btnPrim, opacity: saving ? 0.7 : 1 }}>{saving ? "Guardando..." : editing ? "Guardar cambios" : "Añadir trabajo"}</button>}
+  </Modal>;
+
+  const detailModal = detail && <Modal title="Trabajo" onClose={() => setDetail(null)}>
+    <DetalleTrabajo t={detail} />
+    <EstadoSelector estado={detail.estado as string} onChange={k => changeEstado(detail.id as string, k)} />
+    <button onClick={() => openForm(detail)} style={{ ...S.btnGhost, width: "100%", marginTop: 8 }}>✏️ Editar trabajo</button>
   </Modal>;
 
   if (selectedDate) {
@@ -925,19 +1115,11 @@ function AgendaTab() {
       <button onClick={() => setSelectedDate(null)} style={{ ...S.btnGhost, marginBottom: 14 }}>← Volver a la semana</button>
       <div style={{ fontSize: 18, fontWeight: 800, color: "#EEF2FF", marginBottom: 14 }}>{DIAS_ABR[fecha.getDay()]} {fmtDayShort(fecha)}</div>
       {trabajos.length === 0 ? <Empty /> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {trabajos.map(t => (
-          <div key={t.id as string} style={{ background: "#0A1F4E", border: "1px solid #1A3A7A", borderRadius: 14, padding: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <span style={{ fontSize: 13, color: ACCENT, fontWeight: 700 }}>{(t.hora_inicio as string) || "sin hora"}</span>
-              <Badge estado={t.estado as string} map={ESTADOS_T} />
-            </div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: "#EEF2FF", marginBottom: 4 }}>{t.cliente as string}</div>
-            <div style={{ fontSize: 13, color: "#7AA0D4" }}>{t.servicio as string} · {t.zona as string}</div>
-          </div>
-        ))}
+        {trabajos.map(t => <TrabajoCard key={t.id as string} t={t} onClick={() => setDetail(t)} mostrarFecha={false} />)}
       </div>}
-      <FAB onClick={openForm} />
+      <FAB onClick={() => openForm()} />
       {formModal}
+      {detailModal}
     </div>;
   }
 
@@ -953,7 +1135,7 @@ function AgendaTab() {
     {loading && Object.keys(porFecha).length === 0 ? <Spinner /> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {dias.map(d => {
         const iso = toISODate(d);
-        const trabajos = porFecha[iso] || [];
+        const trabajos = [...(porFecha[iso] || [])].sort(ordenarPorHora);
         const carga = cargaTrabajos(trabajos.length);
         const isToday = iso === todayISO;
         const isPast = iso < todayISO;
@@ -962,22 +1144,32 @@ function AgendaTab() {
           border: "1px solid #1A3A7A",
           borderLeft: isToday ? "3px solid #60a5fa" : "1px solid #1A3A7A",
           borderRadius: 14, padding: "14px 16px",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
+          display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10,
           cursor: "pointer",
           opacity: isPast && !isToday ? 0.4 : 1,
         }}>
-          <div>
+          <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 15, color: "#EEF2FF" }}>{DIAS_ABR[d.getDay()]} {d.getDate()}</span>
               {isToday && <span style={{ background: "#60a5fa22", color: "#60a5fa", border: "1px solid #60a5fa55", borderRadius: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, letterSpacing: 0.5 }}>HOY</span>}
             </div>
             <div style={{ fontSize: 13, color: "#7AA0D4", marginTop: 2, opacity: trabajos.length === 0 ? 0.5 : 1 }}>{trabajos.length === 0 ? "libre" : `${trabajos.length} trabajo${trabajos.length === 1 ? "" : "s"}`}</div>
+            {/* Vista previa del día: la recepción ve a quién hay que atender sin abrir el día. */}
+            {trabajos.slice(0, 3).map(t => (
+              <div key={t.id as string} style={{ display: "flex", gap: 6, marginTop: 4, fontSize: 12, minWidth: 0 }}>
+                <span style={{ color: t.hora_inicio ? ACCENT : "#3A5A9A", fontWeight: 700, flexShrink: 0, width: 42 }}>{(t.hora_inicio as string) || "—"}</span>
+                <span style={{ color: "#93B4E8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.cliente as string}</span>
+              </div>
+            ))}
+            {trabajos.length > 3 && <div style={{ fontSize: 11, color: "#3A5A9A", marginTop: 4 }}>+{trabajos.length - 3} más</div>}
           </div>
-          <span style={{ fontSize: carga.icon === "🔥" ? 20 : 12, color: carga.color }}>{carga.icon}</span>
+          <span style={{ fontSize: carga.icon === "🔥" ? 20 : 12, color: carga.color, flexShrink: 0 }}>{carga.icon}</span>
         </div>;
       })}
     </div>}
+    <FAB onClick={() => openForm()} />
     {formModal}
+    {detailModal}
   </div>;
 }
 
