@@ -783,6 +783,10 @@ function MaterialesTab() {
 // ─── Detalle / formulario de trabajo (compartido por Trabajos y Agenda) ────────
 function DetalleTrabajo({t}:{t:Record<string,unknown>}) {
   const rango=rangoHorario(t);
+  // El importe guardado es siempre la base imponible (así lo usa FacturaModal para
+  // sumar el IVA al facturar); acá solo se muestra el total ya con IVA incluido.
+  const importeBase=t.importe?Number(t.importe):0;
+  const importeConIva=t.tiene_iva?importeBase*(1+IVA):importeBase;
   return <>
     <div style={{marginBottom:14}}>
       <div style={{fontSize:20,fontWeight:800,color:"#EEF2FF",marginBottom:4}}>{t.cliente as string}</div>
@@ -795,7 +799,7 @@ function DetalleTrabajo({t}:{t:Record<string,unknown>}) {
     <div style={{display:"flex",gap:8,marginBottom:14}}>
       <InfoChip label="Fecha" value={fmt(t.fecha as string)}/>
       <InfoChip label="Horario" value={rango||"Sin hora"} color={rango?"#EEF2FF":"#7AA0D4"}/>
-      <InfoChip label="Importe" value={t.importe?`${Number(t.importe).toFixed(2)}€${t.tiene_iva?" c/IVA":""}`:"—"} color={t.importe?ACCENT:"#7AA0D4"}/>
+      <InfoChip label="Importe" value={t.importe?`${importeConIva.toFixed(2)}€${t.tiene_iva?" c/IVA":""}`:"—"} color={t.importe?ACCENT:"#7AA0D4"}/>
     </div>
     {!!t.metodo_pago&&<div style={{marginBottom:14}}><span style={{background:"#05966922",color:"#059669",border:"1px solid #05966944",borderRadius:6,padding:"3px 10px",fontSize:12,fontWeight:700}}>Pagado: {metodoPagoLabel(t.metodo_pago as string)}</span></div>}
     <PhoneLink telefono={t.telefono as string}/>
@@ -819,8 +823,9 @@ function TrabajoCard({t,onClick,mostrarFecha}:{t:Record<string,unknown>;onClick:
       </div>
     </div>
     <div style={{fontSize:13,color:"#7AA0D4",marginBottom:8}}>{t.servicio as string} · {t.zona as string}</div>
-    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
       <Badge estado={t.estado as string} map={ESTADOS_T}/>
+      {!!t.metodo_pago&&<span style={{background:"#05966922",color:"#059669",border:"1px solid #05966944",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{metodoPagoLabel(t.metodo_pago as string)}</span>}
       {!!t.acceso&&<Info size={14} color="#7AA0D4"/>}
       {!!t.archivado_at&&<span style={{background:"#6B728022",color:"#9CA3AF",border:"1px solid #6B728044",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:0.4}}>ARCHIVADO</span>}
     </div>
