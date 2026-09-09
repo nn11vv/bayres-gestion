@@ -174,8 +174,11 @@ const ESTADOS_T: Record<string,{label:string;color:string}> = {
   pendiente:{label:"Pendiente",color:"#D97706"}, en_curso:{label:"En curso",color:ACCENT},
   completado:{label:"Completado",color:"#059669"}, cancelado:{label:"Cancelado",color:"#DC2626"},
 };
-const METODOS_PAGO: [string,string,string][] = [["efectivo","💵","Efectivo"],["tarjeta","💳","Tarjeta"],["transferencia","🏦","Transferencia"]];
-const metodoPagoLabel = (k: string): string => { const m = METODOS_PAGO.find(([key]) => key === k); return m ? `${m[1]} ${m[2]}` : k; };
+const METODOS_PAGO: [string,string,string][] = [["efectivo","💵","Efectivo"],["tarjeta","💳","Tarjeta"],["transferencia","🏦","Transferencia"],["bizum","","Bizum"]];
+// Tarjeta y transferencia casi siempre llevan factura con IVA; Bizum, al ser
+// pagos entre particulares, nunca lo lleva.
+const IVA_POR_DEFECTO: Record<string,boolean> = {efectivo:false,tarjeta:true,transferencia:true,bizum:false};
+const metodoPagoLabel = (k: string): string => { const m = METODOS_PAGO.find(([key]) => key === k); return m ? (m[1]?`${m[1]} ${m[2]}`:m[2]) : k; };
 const ZONAS     = ["Alicante","Playa San Juan","San Juan Pueblo","Mutxamel","El Campello","Bussot","Benidorm","Jávea","Otra"];
 const SERVICIOS = ["Reparación persiana","Instalación persiana","Motorización persiana","Mosquitera","Aire acondicionado","Electricidad","Otro"];
 const VALID_TABS = ["presupuestos","materiales","trabajos","agenda"];
@@ -841,13 +844,19 @@ function EstadoSelector({estado,onChange}:{estado:string;onChange:(k:string)=>vo
 function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Record<string,unknown>;saving:boolean;onConfirm:(metodo:string,tieneIva:boolean)=>void;onClose:()=>void}) {
   const [metodo,setMetodo]=useState((trabajo.metodo_pago as string)||"");
   const [tieneIva,setTieneIva]=useState(!!trabajo.tiene_iva);
+  // Cada método trae un default de IVA razonable (tarjeta/transferencia casi
+  // siempre facturan con IVA, Bizum nunca), pero sigue siendo editable salvo
+  // en Bizum, donde no aplica.
+  const elegirMetodo=(k:string)=>{setMetodo(k);setTieneIva(IVA_POR_DEFECTO[k]);};
   return <Modal title="Completar trabajo" onClose={onClose} zIndex={200}>
     <Field label="¿Cómo pagó el cliente?">
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-        {METODOS_PAGO.map(([k,icon,label])=><button key={k} onClick={()=>setMetodo(k)} style={{border:`1px solid ${metodo===k?"#059669":"#1A3A7A"}`,borderRadius:8,padding:"10px 6px",background:metodo===k?"#05966922":"transparent",color:metodo===k?"#059669":"#7AA0D4",fontSize:13,fontWeight:700,cursor:"pointer"}}>{icon} {label}</button>)}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+        {METODOS_PAGO.map(([k,icon,label])=><button key={k} onClick={()=>elegirMetodo(k)} style={{border:`1px solid ${metodo===k?"#059669":"#1A3A7A"}`,borderRadius:8,padding:"10px 6px",background:metodo===k?"#05966922":"transparent",color:metodo===k?"#059669":"#7AA0D4",fontSize:13,fontWeight:700,cursor:"pointer"}}>{k==="bizum"?<span style={{fontStyle:"italic",fontWeight:800,letterSpacing:0.3}}>Bizum</span>:<>{icon} {label}</>}</button>)}
       </div>
     </Field>
-    <Toggle active={tieneIva} onChange={()=>setTieneIva(v=>!v)} label="Aplicar IVA 21%"/>
+    {metodo==="bizum"
+      ? <div style={{background:"#0D2259",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #1A3A7A",fontSize:13,color:"#7AA0D4"}}>Bizum no lleva IVA</div>
+      : <Toggle active={tieneIva} onChange={()=>setTieneIva(v=>!v)} label="Aplicar IVA 21%"/>}
     <button onClick={()=>onConfirm(metodo,tieneIva)} disabled={!metodo||saving} style={{...S.btnPrim,opacity:(!metodo||saving)?0.6:1}}>{saving?"Guardando...":"✓ Marcar como completado"}</button>
   </Modal>;
 }
