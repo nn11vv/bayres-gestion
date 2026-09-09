@@ -851,7 +851,7 @@ function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Recor
   return <Modal title="Completar trabajo" onClose={onClose} zIndex={200}>
     <Field label="¿Cómo pagó el cliente?">
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-        {METODOS_PAGO.map(([k,icon,label])=><button key={k} onClick={()=>elegirMetodo(k)} style={{border:`1px solid ${metodo===k?"#059669":"#1A3A7A"}`,borderRadius:8,padding:"10px 6px",minHeight:44,background:metodo===k?"#05966922":"transparent",color:metodo===k?"#059669":"#7AA0D4",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{k==="bizum"?<img src="/bizum-logo.png" alt="Bizum" style={{height:22,objectFit:"contain"}}/>:<>{icon} {label}</>}</button>)}
+        {METODOS_PAGO.map(([k,icon,label])=><button key={k} onClick={()=>elegirMetodo(k)} style={{border:`1px solid ${metodo===k?"#059669":"#1A3A7A"}`,borderRadius:8,padding:"10px 6px",minHeight:44,background:metodo===k?"#05966922":"transparent",color:metodo===k?"#059669":"#7AA0D4",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{k==="bizum"?<img src="/bizum-logo.png?v=2" alt="Bizum" style={{height:26,objectFit:"contain"}}/>:<>{icon} {label}</>}</button>)}
       </div>
     </Field>
     {metodo==="bizum"
