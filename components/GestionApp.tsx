@@ -174,6 +174,8 @@ const ESTADOS_T: Record<string,{label:string;color:string}> = {
   pendiente:{label:"Pendiente",color:"#D97706"}, en_curso:{label:"En curso",color:ACCENT},
   completado:{label:"Completado",color:"#059669"}, cancelado:{label:"Cancelado",color:"#DC2626"},
 };
+const METODOS_PAGO: [string,string,string][] = [["efectivo","💵","Efectivo"],["tarjeta","💳","Tarjeta"],["transferencia","🏦","Transferencia"]];
+const metodoPagoLabel = (k: string): string => { const m = METODOS_PAGO.find(([key]) => key === k); return m ? `${m[1]} ${m[2]}` : k; };
 const ZONAS     = ["Alicante","Playa San Juan","San Juan Pueblo","Mutxamel","El Campello","Bussot","Benidorm","Jávea","Otra"];
 const SERVICIOS = ["Reparación persiana","Instalación persiana","Motorización persiana","Mosquitera","Aire acondicionado","Electricidad","Otro"];
 const VALID_TABS = ["presupuestos","materiales","trabajos","agenda"];
@@ -793,8 +795,9 @@ function DetalleTrabajo({t}:{t:Record<string,unknown>}) {
     <div style={{display:"flex",gap:8,marginBottom:14}}>
       <InfoChip label="Fecha" value={fmt(t.fecha as string)}/>
       <InfoChip label="Horario" value={rango||"Sin hora"} color={rango?"#EEF2FF":"#7AA0D4"}/>
-      <InfoChip label="Importe" value={t.importe?`${Number(t.importe).toFixed(2)}€`:"—"} color={t.importe?ACCENT:"#7AA0D4"}/>
+      <InfoChip label="Importe" value={t.importe?`${Number(t.importe).toFixed(2)}€${t.tiene_iva?" c/IVA":""}`:"—"} color={t.importe?ACCENT:"#7AA0D4"}/>
     </div>
+    {!!t.metodo_pago&&<div style={{marginBottom:14}}><span style={{background:"#05966922",color:"#059669",border:"1px solid #05966944",borderRadius:6,padding:"3px 10px",fontSize:12,fontWeight:700}}>Pagado: {metodoPagoLabel(t.metodo_pago as string)}</span></div>}
     <PhoneLink telefono={t.telefono as string}/>
     <MapsLink direccion={t.direccion as string}/>
     {!!t.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{t.acceso as string}</span></div>}
@@ -826,6 +829,22 @@ function TrabajoCard({t,onClick,mostrarFecha}:{t:Record<string,unknown>;onClick:
 
 function EstadoSelector({estado,onChange}:{estado:string;onChange:(k:string)=>void}) {
   return <Field label="Cambiar estado"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>{Object.entries(ESTADOS_T).map(([k,v])=><button key={k} onClick={()=>onChange(k)} style={{border:`1px solid ${v.color}55`,borderRadius:8,padding:"8px 6px",background:estado===k?v.color+"22":"transparent",color:v.color,fontSize:12,fontWeight:700,cursor:"pointer"}}>{v.label}</button>)}</div></Field>;
+}
+
+// Paso obligatorio al marcar un trabajo como completado: sin método de pago no
+// hay forma de que recepción facture sin llamar al técnico.
+function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Record<string,unknown>;saving:boolean;onConfirm:(metodo:string,tieneIva:boolean)=>void;onClose:()=>void}) {
+  const [metodo,setMetodo]=useState((trabajo.metodo_pago as string)||"");
+  const [tieneIva,setTieneIva]=useState(!!trabajo.tiene_iva);
+  return <Modal title="Completar trabajo" onClose={onClose} zIndex={200}>
+    <Field label="¿Cómo pagó el cliente?">
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+        {METODOS_PAGO.map(([k,icon,label])=><button key={k} onClick={()=>setMetodo(k)} style={{border:`1px solid ${metodo===k?"#059669":"#1A3A7A"}`,borderRadius:8,padding:"10px 6px",background:metodo===k?"#05966922":"transparent",color:metodo===k?"#059669":"#7AA0D4",fontSize:13,fontWeight:700,cursor:"pointer"}}>{icon} {label}</button>)}
+      </div>
+    </Field>
+    <Toggle active={tieneIva} onChange={()=>setTieneIva(v=>!v)} label="Aplicar IVA 21%"/>
+    <button onClick={()=>onConfirm(metodo,tieneIva)} disabled={!metodo||saving} style={{...S.btnPrim,opacity:(!metodo||saving)?0.6:1}}>{saving?"Guardando...":"✓ Marcar como completado"}</button>
+  </Modal>;
 }
 
 function TrabajoFormFields({form,setForm}:{form:Record<string,unknown>;setForm:(f:Record<string,unknown>)=>void}) {
@@ -860,6 +879,8 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const [showArchived,setShowArchived]=useState(false);
   const [search,setSearch]=useState("");
   const [sort,setSort]=useSort("bayres.sort.trabajos","fecha_asc");
+  const [completar,setCompletar]=useState<Record<string,unknown>|null>(null);
+  const [savingCompletar,setSavingCompletar]=useState(false);
   const blank={cliente:"",telefono:"",zona:ZONAS[0],direccion:"",acceso:"",servicio:SERVICIOS[0],estado:"pendiente",fecha:toISODate(new Date()),nota:"",hora_inicio:"",email_cliente:"",direccion_cliente:"",nif_cliente:"",tiene_iva:false,importe:""};
   const [form,setForm]=useState<Record<string,unknown>>(blank);
   const load=useCallback(async()=>{try{setLoading(true);setData(await dbGet("trabajos"));}catch(e){setErr((e as Error).message);}finally{setLoading(false);}},[] );
@@ -884,6 +905,16 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const submit=async()=>{if(!(form.cliente as string).trim())return;setSaving(true);try{if(editing){const u=await dbUpdate("trabajos",editing.id as string,form);setData(d=>d.map(t=>t.id===editing.id?u:t));}else{const u=await dbInsert("trabajos",form);setData(d=>[u,...d]);}setShowForm(false);}catch(e){setErr((e as Error).message);}finally{setSaving(false);}};
   const del=async(id:string)=>{try{await dbDelete("trabajos",id);setData(d=>d.filter(t=>t.id!==id));setDetail(null);setConfirmDel(null);}catch(e){setErr((e as Error).message);}};
   const changeEstado=async(id:string,estado:string)=>{try{await dbUpdate("trabajos",id,{estado});setData(d=>d.map(t=>t.id===id?{...t,estado}:t));setDetail(d=>d?{...d,estado}:null);}catch(e){setErr((e as Error).message);}};
+  const confirmCompletar=async(metodo:string,tieneIva:boolean)=>{
+    if(!completar)return;
+    setSavingCompletar(true);
+    try{
+      const u=await dbUpdate("trabajos",completar.id as string,{estado:"completado",metodo_pago:metodo,tiene_iva:tieneIva});
+      setData(d=>d.map(t=>t.id===completar.id?{...t,...u}:t));
+      setDetail(d=>d?{...d,...u}:null);
+      setCompletar(null);
+    }catch(e){setErr((e as Error).message);}finally{setSavingCompletar(false);}
+  };
   const abrirFactura=(t:Record<string,unknown>)=>{const its:Item[]=[{descripcion:t.servicio as string||"Servicio",cantidad:1,precio_unitario:t.importe?Number(t.importe):0,orden:0}];setFacturaItems(its);setShowFactura(t);};
   const toggleArchivado=async(t:Record<string,unknown>)=>{
     try{
@@ -918,7 +949,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
     <ArchiveToggleButton active={showArchived} onClick={()=>setShowArchived(a=>!a)}/>
     {detail&&<Modal title="Trabajo" onClose={()=>setDetail(null)}>
       <DetalleTrabajo t={detail}/>
-      <EstadoSelector estado={detail.estado as string} onChange={k=>changeEstado(detail.id as string,k)}/>
+      <EstadoSelector estado={detail.estado as string} onChange={k=>k==="completado"?setCompletar(detail):changeEstado(detail.id as string,k)}/>
       <div style={{display:"flex",gap:8,marginTop:8}}>
         <button onClick={()=>openEdit(detail)} style={{...S.btnGhost,flex:1}}>✏️ Editar</button>
         <button onClick={()=>abrirFactura(detail)} style={{...S.btnGhost,flex:1}}>🧾 Factura</button>
@@ -926,6 +957,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
         <button onClick={()=>setConfirmDel(detail.id as string)} style={{...S.btnGhost,flex:1,color:"#DC2626",borderColor:"#DC262640"}}>🗑️</button>
       </div>
     </Modal>}
+    {completar&&<CompletarTrabajoModal trabajo={completar} saving={savingCompletar} onConfirm={confirmCompletar} onClose={()=>setCompletar(null)}/>}
     {showForm&&<Modal title={editing?"Editar trabajo":"Nuevo trabajo"} onClose={()=>setShowForm(false)}>
       <TrabajoFormFields form={form} setForm={setForm}/>
       <button onClick={submit} disabled={saving} style={{...S.btnPrim,opacity:saving?0.7:1}}>{saving?"Guardando...":editing?"Guardar cambios":"Añadir trabajo"}</button>
@@ -981,6 +1013,8 @@ function AgendaTab() {
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [saving, setSaving] = useState(false);
   const [overlapWarning, setOverlapWarning] = useState<{ cliente: string; hora_inicio: string; servicio: string } | null>(null);
+  const [completar, setCompletar] = useState<Record<string, unknown> | null>(null);
+  const [savingCompletar, setSavingCompletar] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const onTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX; };
   const onTouchEnd = (e: React.TouchEvent) => {
@@ -1083,6 +1117,16 @@ function AgendaTab() {
       setDetail(d => d ? { ...d, ...u } : null);
     } catch (e) { setErr((e as Error).message); }
   };
+  const confirmCompletar = async (metodo: string, tieneIva: boolean) => {
+    if (!completar) return;
+    setSavingCompletar(true);
+    try {
+      const u = await dbUpdate("trabajos", completar.id as string, { estado: "completado", metodo_pago: metodo, tiene_iva: tieneIva });
+      upsertLocal(u);
+      setDetail(d => d ? { ...d, ...u } : null);
+      setCompletar(null);
+    } catch (e) { setErr((e as Error).message); } finally { setSavingCompletar(false); }
+  };
 
   // Al cambiar cualquier campo se limpia el aviso de solapamiento: puede haber
   // dejado de aplicar (otro día, otra hora, otro servicio con otra duración).
@@ -1103,9 +1147,10 @@ function AgendaTab() {
 
   const detailModal = detail && <Modal title="Trabajo" onClose={() => setDetail(null)}>
     <DetalleTrabajo t={detail} />
-    <EstadoSelector estado={detail.estado as string} onChange={k => changeEstado(detail.id as string, k)} />
+    <EstadoSelector estado={detail.estado as string} onChange={k => k === "completado" ? setCompletar(detail) : changeEstado(detail.id as string, k)} />
     <button onClick={() => openForm(detail)} style={{ ...S.btnGhost, width: "100%", marginTop: 8 }}>✏️ Editar trabajo</button>
   </Modal>;
+  const completarModal = completar && <CompletarTrabajoModal trabajo={completar} saving={savingCompletar} onConfirm={confirmCompletar} onClose={() => setCompletar(null)} />;
 
   if (selectedDate) {
     const fecha = new Date(selectedDate + "T12:00:00");
@@ -1120,6 +1165,7 @@ function AgendaTab() {
       <FAB onClick={() => openForm()} />
       {formModal}
       {detailModal}
+      {completarModal}
     </div>;
   }
 
@@ -1170,6 +1216,7 @@ function AgendaTab() {
     <FAB onClick={() => openForm()} />
     {formModal}
     {detailModal}
+    {completarModal}
   </div>;
 }
 
