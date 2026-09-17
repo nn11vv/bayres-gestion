@@ -841,14 +841,17 @@ function EstadoSelector({estado,onChange}:{estado:string;onChange:(k:string)=>vo
 
 // Paso obligatorio al marcar un trabajo como completado: sin método de pago no
 // hay forma de que recepción facture sin llamar al técnico.
-function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Record<string,unknown>;saving:boolean;onConfirm:(metodo:string,tieneIva:boolean)=>void;onClose:()=>void}) {
+function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Record<string,unknown>;saving:boolean;onConfirm:(metodo:string,tieneIva:boolean,importe:string)=>void;onClose:()=>void}) {
   const [metodo,setMetodo]=useState((trabajo.metodo_pago as string)||"");
   const [tieneIva,setTieneIva]=useState(!!trabajo.tiene_iva);
+  const [importe,setImporte]=useState((trabajo.importe as string)||"");
   // Cada método trae un default de IVA razonable (tarjeta/transferencia casi
   // siempre facturan con IVA, Bizum nunca), pero sigue siendo editable salvo
   // en Bizum, donde no aplica.
   const elegirMetodo=(k:string)=>{setMetodo(k);setTieneIva(IVA_POR_DEFECTO[k]);};
+  const importeValido=Number(importe)>0;
   return <Modal title="Completar trabajo" onClose={onClose} zIndex={200}>
+    <Field label="Importe (€)"><input style={S.input} type="number" value={importe} onChange={e=>setImporte(e.target.value)} placeholder="0" autoFocus/></Field>
     <Field label="¿Cómo pagó el cliente?">
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
         {METODOS_PAGO.map(([k,icon,label])=><button key={k} onClick={()=>elegirMetodo(k)} style={{border:`1px solid ${metodo===k?"#059669":"#1A3A7A"}`,borderRadius:8,padding:"10px 6px",minHeight:44,background:metodo===k?"#05966922":"transparent",color:metodo===k?"#059669":"#7AA0D4",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{k==="bizum"?<img src="/bizum-logo.png?v=2" alt="Bizum" style={{height:26,objectFit:"contain"}}/>:<>{icon} {label}</>}</button>)}
@@ -857,7 +860,7 @@ function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Recor
     {metodo==="bizum"
       ? <div style={{background:"#0D2259",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #1A3A7A",fontSize:13,color:"#7AA0D4"}}>Bizum no lleva IVA</div>
       : <Toggle active={tieneIva} onChange={()=>setTieneIva(v=>!v)} label="Aplicar IVA 21%"/>}
-    <button onClick={()=>onConfirm(metodo,tieneIva)} disabled={!metodo||saving} style={{...S.btnPrim,opacity:(!metodo||saving)?0.6:1}}>{saving?"Guardando...":"✓ Marcar como completado"}</button>
+    <button onClick={()=>onConfirm(metodo,tieneIva,importe)} disabled={!metodo||!importeValido||saving} style={{...S.btnPrim,opacity:(!metodo||!importeValido||saving)?0.6:1}}>{saving?"Guardando...":"✓ Marcar como completado"}</button>
   </Modal>;
 }
 
@@ -919,11 +922,11 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const submit=async()=>{if(!(form.cliente as string).trim())return;setSaving(true);try{if(editing){const u=await dbUpdate("trabajos",editing.id as string,form);setData(d=>d.map(t=>t.id===editing.id?u:t));}else{const u=await dbInsert("trabajos",form);setData(d=>[u,...d]);}setShowForm(false);}catch(e){setErr((e as Error).message);}finally{setSaving(false);}};
   const del=async(id:string)=>{try{await dbDelete("trabajos",id);setData(d=>d.filter(t=>t.id!==id));setDetail(null);setConfirmDel(null);}catch(e){setErr((e as Error).message);}};
   const changeEstado=async(id:string,estado:string)=>{try{await dbUpdate("trabajos",id,{estado});setData(d=>d.map(t=>t.id===id?{...t,estado}:t));setDetail(d=>d?{...d,estado}:null);}catch(e){setErr((e as Error).message);}};
-  const confirmCompletar=async(metodo:string,tieneIva:boolean)=>{
+  const confirmCompletar=async(metodo:string,tieneIva:boolean,importe:string)=>{
     if(!completar)return;
     setSavingCompletar(true);
     try{
-      const u=await dbUpdate("trabajos",completar.id as string,{estado:"completado",metodo_pago:metodo,tiene_iva:tieneIva});
+      const u=await dbUpdate("trabajos",completar.id as string,{estado:"completado",metodo_pago:metodo,tiene_iva:tieneIva,importe});
       setData(d=>d.map(t=>t.id===completar.id?{...t,...u}:t));
       setDetail(d=>d?{...d,...u}:null);
       setCompletar(null);
@@ -1131,11 +1134,11 @@ function AgendaTab() {
       setDetail(d => d ? { ...d, ...u } : null);
     } catch (e) { setErr((e as Error).message); }
   };
-  const confirmCompletar = async (metodo: string, tieneIva: boolean) => {
+  const confirmCompletar = async (metodo: string, tieneIva: boolean, importe: string) => {
     if (!completar) return;
     setSavingCompletar(true);
     try {
-      const u = await dbUpdate("trabajos", completar.id as string, { estado: "completado", metodo_pago: metodo, tiene_iva: tieneIva });
+      const u = await dbUpdate("trabajos", completar.id as string, { estado: "completado", metodo_pago: metodo, tiene_iva: tieneIva, importe });
       upsertLocal(u);
       setDetail(d => d ? { ...d, ...u } : null);
       setCompletar(null);
