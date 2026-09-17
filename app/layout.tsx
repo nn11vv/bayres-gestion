@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
+import VersionWatcher from "@/components/VersionWatcher";
 import "./globals.css";
 
 const plusJakarta = Plus_Jakarta_Sans({
@@ -29,6 +30,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/sol-de-mayo.png" />
       </head>
       <body className={`${plusJakarta.variable} antialiased`}>
+        <VersionWatcher />
         {children}
       </body>
     </html>
