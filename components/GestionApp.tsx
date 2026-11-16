@@ -804,12 +804,22 @@ function DetalleTrabajo({t}:{t:Record<string,unknown>}) {
       <InfoChip label="Horario" value={rango||"Sin hora"} color={rango?"#EEF2FF":"#7AA0D4"}/>
       <InfoChip label="Importe" value={t.importe?`${importeConIva.toFixed(2)}€${t.tiene_iva?" c/IVA":""}`:"—"} color={t.importe?ACCENT:"#7AA0D4"}/>
     </div>
-    {!!t.metodo_pago&&<div style={{marginBottom:14}}><span style={{background:"#05966922",color:"#059669",border:"1px solid #05966944",borderRadius:6,padding:"3px 10px",fontSize:12,fontWeight:700}}>Pagado: {metodoPagoLabel(t.metodo_pago as string)}</span></div>}
+    {(!!t.metodo_pago||!!t.es_presupuesto)&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+      {!!t.es_presupuesto&&<PresupuestoBadge t={t} grande/>}
+      {!!t.metodo_pago&&<span style={{background:"#05966922",color:"#059669",border:"1px solid #05966944",borderRadius:6,padding:"3px 10px",fontSize:12,fontWeight:700}}>Pagado: {metodoPagoLabel(t.metodo_pago as string)}</span>}
+    </div>}
     <PhoneLink telefono={t.telefono as string}/>
     <MapsLink direccion={t.direccion as string}/>
     {!!t.acceso&&<div style={{display:"flex",gap:8,background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><Info size={16} color={ACCENT} style={{flexShrink:0,marginTop:2}}/><span style={{fontSize:13,color:"#93B4E8",whiteSpace:"pre-wrap"}}>{t.acceso as string}</span></div>}
     {!!t.nota&&<ExpandableNote text={t.nota as string}/>}
   </>;
+}
+
+// "Sin cargo" solo se puede afirmar una vez completada la visita; antes es
+// simplemente una visita de presupuesto pendiente.
+function PresupuestoBadge({t,grande}:{t:Record<string,unknown>;grande?:boolean}) {
+  const sinCargo=t.estado==="completado"&&!t.metodo_pago;
+  return <span style={{background:"#7C3AED22",color:"#A78BFA",border:"1px solid #7C3AED44",borderRadius:6,padding:grande?"3px 10px":"2px 8px",fontSize:grande?12:11,fontWeight:700,whiteSpace:"nowrap"}}>📋 Visita presupuesto{sinCargo?" · sin cargo":""}</span>;
 }
 
 function TrabajoCard({t,onClick,mostrarFecha}:{t:Record<string,unknown>;onClick:()=>void;mostrarFecha:boolean}) {
@@ -828,6 +838,7 @@ function TrabajoCard({t,onClick,mostrarFecha}:{t:Record<string,unknown>;onClick:
     <div style={{fontSize:13,color:"#7AA0D4",marginBottom:8}}>{t.servicio as string} · {t.zona as string}</div>
     <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
       <Badge estado={t.estado as string} map={ESTADOS_T}/>
+      {!!t.es_presupuesto&&<PresupuestoBadge t={t}/>}
       {!!t.metodo_pago&&<span style={{background:"#05966922",color:"#059669",border:"1px solid #05966944",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{metodoPagoLabel(t.metodo_pago as string)}</span>}
       {!!t.acceso&&<Info size={14} color="#7AA0D4"/>}
       {!!t.archivado_at&&<span style={{background:"#6B728022",color:"#9CA3AF",border:"1px solid #6B728044",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:0.4}}>ARCHIVADO</span>}
@@ -839,20 +850,42 @@ function EstadoSelector({estado,onChange}:{estado:string;onChange:(k:string)=>vo
   return <Field label="Cambiar estado"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>{Object.entries(ESTADOS_T).map(([k,v])=><button key={k} onClick={()=>onChange(k)} style={{border:`1px solid ${v.color}55`,borderRadius:8,padding:"8px 6px",background:estado===k?v.color+"22":"transparent",color:v.color,fontSize:12,fontWeight:700,cursor:"pointer"}}>{v.label}</button>)}</div></Field>;
 }
 
+type DatosCompletar={esPresupuesto:boolean;metodo:string|null;tieneIva:boolean;importe:string};
+
+function Segmentado<T>({opciones,valor,onChange}:{opciones:[T,string][];valor:T;onChange:(v:T)=>void}) {
+  return <div style={{display:"grid",gridTemplateColumns:`repeat(${opciones.length},1fr)`,gap:6}}>
+    {opciones.map(([v,label])=><button key={label} onClick={()=>onChange(v)} style={{border:`1px solid ${valor===v?"#059669":"#1A3A7A"}`,borderRadius:8,padding:"10px 6px",minHeight:44,background:valor===v?"#05966922":"transparent",color:valor===v?"#059669":"#7AA0D4",fontSize:13,fontWeight:700,cursor:"pointer"}}>{label}</button>)}
+  </div>;
+}
+
 // Paso obligatorio al marcar un trabajo como completado: sin método de pago no
 // hay forma de que recepción facture sin llamar al técnico.
-function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Record<string,unknown>;saving:boolean;onConfirm:(metodo:string,tieneIva:boolean,importe:string)=>void;onClose:()=>void}) {
+// Las visitas de presupuesto pueden no cobrarse ("sin cargo"): en ese caso no
+// se piden importe ni método de pago y se guardan vacíos.
+function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Record<string,unknown>;saving:boolean;onConfirm:(datos:DatosCompletar)=>void;onClose:()=>void}) {
   const [metodo,setMetodo]=useState((trabajo.metodo_pago as string)||"");
   const [tieneIva,setTieneIva]=useState(!!trabajo.tiene_iva);
   const [importe,setImporte]=useState((trabajo.importe as string)||"");
+  const [esPresupuesto,setEsPresupuesto]=useState(!!trabajo.es_presupuesto);
+  // Una visita de presupuesto ya completada sin método de pago fue sin cargo;
+  // una nueva arranca como sin cargo, que es el caso más habitual.
+  const [cobrada,setCobrada]=useState(!!trabajo.metodo_pago);
+  const sinCargo=esPresupuesto&&!cobrada;
   // Cada método trae un default de IVA razonable (tarjeta/transferencia casi
   // siempre facturan con IVA, Bizum nunca), pero sigue siendo editable salvo
   // en Bizum, donde no aplica.
   const elegirMetodo=(k:string)=>{setMetodo(k);setTieneIva(IVA_POR_DEFECTO[k]);};
   const importeValido=Number(importe)>0;
   const yaCompletado=trabajo.estado==="completado";
+  const valido=sinCargo||(!!metodo&&importeValido);
+  const confirmar=()=>onConfirm(sinCargo
+    ?{esPresupuesto:true,metodo:null,tieneIva:false,importe:""}
+    :{esPresupuesto,metodo,tieneIva,importe});
   return <Modal title={yaCompletado?"Editar pago":"Completar trabajo"} onClose={onClose} zIndex={200}>
-    <Field label="Importe (€)"><input style={S.input} type="number" value={importe} onChange={e=>setImporte(e.target.value)} placeholder="0" autoFocus/></Field>
+    <Field label="Tipo"><Segmentado opciones={[[false,"🔧 Trabajo"],[true,"📋 Visita de presupuesto"]]} valor={esPresupuesto} onChange={setEsPresupuesto}/></Field>
+    {esPresupuesto&&<Field label="¿Se cobró la visita?"><Segmentado opciones={[[false,"Sin cargo"],[true,"Visita cobrada"]]} valor={cobrada} onChange={setCobrada}/></Field>}
+    {!sinCargo&&<>
+    <Field label="Importe (€)"><input style={S.input} type="number" value={importe} onChange={e=>setImporte(e.target.value)} placeholder="0"/></Field>
     <Field label="¿Cómo pagó el cliente?">
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
         {METODOS_PAGO.map(([k,icon,label])=><button key={k} onClick={()=>elegirMetodo(k)} style={{border:`1px solid ${metodo===k?"#059669":"#1A3A7A"}`,borderRadius:8,padding:"10px 6px",minHeight:44,background:metodo===k?"#05966922":"transparent",color:metodo===k?"#059669":"#7AA0D4",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{k==="bizum"?<img src="/bizum-logo.png?v=2" alt="Bizum" style={{height:26,objectFit:"contain"}}/>:<>{icon} {label}</>}</button>)}
@@ -861,7 +894,8 @@ function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Recor
     {metodo==="bizum"
       ? <div style={{background:"#0D2259",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #1A3A7A",fontSize:13,color:"#7AA0D4"}}>Bizum no lleva IVA</div>
       : <Toggle active={tieneIva} onChange={()=>setTieneIva(v=>!v)} label="Aplicar IVA 21%"/>}
-    <button onClick={()=>onConfirm(metodo,tieneIva,importe)} disabled={!metodo||!importeValido||saving} style={{...S.btnPrim,opacity:(!metodo||!importeValido||saving)?0.6:1}}>{saving?"Guardando...":yaCompletado?"✓ Guardar pago":"✓ Marcar como completado"}</button>
+    </>}
+    <button onClick={confirmar} disabled={!valido||saving} style={{...S.btnPrim,opacity:(!valido||saving)?0.6:1}}>{saving?"Guardando...":yaCompletado?"✓ Guardar pago":"✓ Marcar como completado"}</button>
   </Modal>;
 }
 
@@ -873,6 +907,7 @@ function TrabajoFormFields({form,setForm}:{form:Record<string,unknown>;setForm:(
     <DireccionField value={(form.direccion as string)||""} onChange={v=>setForm({...form,direccion:v})}/>
     <Field label="Acceso / indicaciones"><textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={(form.acceso as string)||""} onChange={e=>setForm({...form,acceso:e.target.value})} placeholder="Ej: Escalera B, 3º Izq · Timbre no funciona · Aparcar en Calle Mayor"/></Field>
     <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e=>setForm({...form,servicio:e.target.value})}>{SERVICIOS.map(s=><option key={s}>{s}</option>)}</select></Field>
+    <Toggle active={!!form.es_presupuesto} onChange={()=>setForm({...form,es_presupuesto:!form.es_presupuesto})} label="📋 Visita de presupuesto"/>
     <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e=>setForm({...form,estado:e.target.value})}>{Object.entries(ESTADOS_T).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
     <Field label="Fecha"><input style={S.input} type="date" value={(form.fecha as string)||""} onChange={e=>setForm({...form,fecha:e.target.value})}/></Field>
     <Field label={`Hora de inicio${form.servicio?` (≈${DURACION_MIN[form.servicio as string]||60} min)`:""}`}><input style={S.input} type="time" value={(form.hora_inicio as string)||""} onChange={e=>setForm({...form,hora_inicio:e.target.value})}/></Field>
@@ -923,11 +958,11 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
   const submit=async()=>{if(!(form.cliente as string).trim())return;setSaving(true);try{if(editing){const u=await dbUpdate("trabajos",editing.id as string,form);setData(d=>d.map(t=>t.id===editing.id?u:t));}else{const u=await dbInsert("trabajos",form);setData(d=>[u,...d]);}setShowForm(false);}catch(e){setErr((e as Error).message);}finally{setSaving(false);}};
   const del=async(id:string)=>{try{await dbDelete("trabajos",id);setData(d=>d.filter(t=>t.id!==id));setDetail(null);setConfirmDel(null);}catch(e){setErr((e as Error).message);}};
   const changeEstado=async(id:string,estado:string)=>{try{await dbUpdate("trabajos",id,{estado});setData(d=>d.map(t=>t.id===id?{...t,estado}:t));setDetail(d=>d?{...d,estado}:null);}catch(e){setErr((e as Error).message);}};
-  const confirmCompletar=async(metodo:string,tieneIva:boolean,importe:string)=>{
+  const confirmCompletar=async(d:DatosCompletar)=>{
     if(!completar)return;
     setSavingCompletar(true);
     try{
-      const u=await dbUpdate("trabajos",completar.id as string,{estado:"completado",metodo_pago:metodo,tiene_iva:tieneIva,importe});
+      const u=await dbUpdate("trabajos",completar.id as string,{estado:"completado",es_presupuesto:d.esPresupuesto,metodo_pago:d.metodo,tiene_iva:d.tieneIva,importe:d.importe});
       setData(d=>d.map(t=>t.id===completar.id?{...t,...u}:t));
       setDetail(d=>d?{...d,...u}:null);
       setCompletar(null);
@@ -1136,11 +1171,11 @@ function AgendaTab() {
       setDetail(d => d ? { ...d, ...u } : null);
     } catch (e) { setErr((e as Error).message); }
   };
-  const confirmCompletar = async (metodo: string, tieneIva: boolean, importe: string) => {
+  const confirmCompletar = async (d: DatosCompletar) => {
     if (!completar) return;
     setSavingCompletar(true);
     try {
-      const u = await dbUpdate("trabajos", completar.id as string, { estado: "completado", metodo_pago: metodo, tiene_iva: tieneIva, importe });
+      const u = await dbUpdate("trabajos", completar.id as string, { estado: "completado", es_presupuesto: d.esPresupuesto, metodo_pago: d.metodo, tiene_iva: d.tieneIva, importe: d.importe });
       upsertLocal(u);
       setDetail(d => d ? { ...d, ...u } : null);
       setCompletar(null);
