@@ -63,7 +63,7 @@ function loadGoogleMapsPlaces(): Promise<boolean> {
 const VAPID_PUBLIC = "BCH1ymwR0tNamx2WFTPvOzyVE9C4iEDmuwOWzOjOmG2E7FF3aMSbUzvtkCxYqsEqthETWsozk5Na3jteDJGZM-w";
 function urlBase64ToUint8Array(b: string) {
   const pad = "=".repeat((4 - b.length % 4) % 4);
-  return Uint8Array.from([...window.atob((b + pad).replace(/-/g, "+").replace(/_/g, "/"))].map(c => c.charCodeAt(0)));
+  return Uint8Array.from(window.atob((b + pad).replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
 }
 async function registerPushSubscription(): Promise<boolean> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
@@ -512,7 +512,7 @@ function FacturaModal({registro,tipo,items,onClose}:{registro:Record<string,unkn
     <div style={{background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:16,border:"1px solid #1A3A7A"}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:"#7AA0D4",fontSize:13}}>Número</span><span style={{color:"#EEF2FF",fontSize:13,fontWeight:700}}>{numeroDoc||"Generando..."}</span></div>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:registro.tiene_iva?4:0}}><span style={{color:"#7AA0D4",fontSize:13}}>Subtotal</span><span style={{color:"#EEF2FF",fontSize:13}}>{subtotal.toFixed(2)}€</span></div>
-      {registro.tiene_iva&&<><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:"#7AA0D4",fontSize:13}}>IVA 21%</span><span style={{color:"#EEF2FF",fontSize:13}}>{iva.toFixed(2)}€</span></div><div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid #1A3A7A",paddingTop:6}}><span style={{color:"#EEF2FF",fontSize:14,fontWeight:700}}>Total</span><span style={{color:ACCENT,fontSize:15,fontWeight:800}}>{total.toFixed(2)}€</span></div></>}
+      {!!registro.tiene_iva&&<><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:"#7AA0D4",fontSize:13}}>IVA 21%</span><span style={{color:"#EEF2FF",fontSize:13}}>{iva.toFixed(2)}€</span></div><div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid #1A3A7A",paddingTop:6}}><span style={{color:"#EEF2FF",fontSize:14,fontWeight:700}}>Total</span><span style={{color:ACCENT,fontSize:15,fontWeight:800}}>{total.toFixed(2)}€</span></div></>}
     </div>
     <Field label="Dirección del cliente (opcional)"><input style={S.input} value={dirCli} onChange={e=>setDirCli(e.target.value)} placeholder="Calle, número, ciudad"/></Field>
     <Field label="NIF del cliente (opcional)"><input style={S.input} value={nifCli} onChange={e=>setNifCli(e.target.value)} placeholder="Si está vacío aparece 'Contado'"/></Field>
@@ -667,9 +667,9 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
           <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:6}}>
             <div style={{minWidth:0}}>
               <div style={{fontWeight:700,fontSize:15,color:"#EEF2FF"}}>{p.cliente as string}</div>
-              {p.direccion&&<div style={{fontSize:12,color:"#7AA0D4",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.direccion as string}</div>}
+              {!!p.direccion&&<div style={{fontSize:12,color:"#7AA0D4",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.direccion as string}</div>}
             </div>
-            <div style={{textAlign:"right"}}><span style={{fontWeight:800,fontSize:15,color:ACCENT}}>{p.importe?`${Number(p.importe).toFixed(2)}€`:"—"}</span>{p.tiene_iva&&<span style={{display:"block",fontSize:10,color:"#7AA0D4"}}>c/IVA</span>}</div>
+            <div style={{textAlign:"right"}}><span style={{fontWeight:800,fontSize:15,color:ACCENT}}>{p.importe?`${Number(p.importe).toFixed(2)}€`:"—"}</span>{!!p.tiene_iva&&<span style={{display:"block",fontSize:10,color:"#7AA0D4"}}>c/IVA</span>}</div>
           </div>
           <div style={{fontSize:13,color:"#7AA0D4",marginBottom:8}}>{p.servicio as string} · {p.zona as string}</div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",gap:6,alignItems:"center"}}><Badge estado={p.estado as string} map={ESTADOS_P}/>{!!p.archivado_at&&<span style={{background:"#6B728022",color:"#9CA3AF",border:"1px solid #6B728044",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,letterSpacing:0.4}}>ARCHIVADO</span>}</div><span style={{fontSize:12,color:"#3A5A9A"}}>{fmt(p.fecha as string)}</span></div>
@@ -694,7 +694,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:"#7AA0D4",fontSize:13}}>Total {detail.tiene_iva?"(c/IVA)":"(sin IVA)"}</span><span style={{color:ACCENT,fontWeight:800,fontSize:16}}>{detail.importe?`${Number(detail.importe).toFixed(2)}€`:"—"}</span></div>
         <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:"#7AA0D4",fontSize:13}}>Fecha</span><span style={{color:"#EEF2FF",fontSize:13}}>{fmt(detail.fecha as string)}</span></div>
       </div>
-      {detail.nota&&<ExpandableNote text={detail.nota as string}/>}
+      {!!detail.nota&&<ExpandableNote text={detail.nota as string}/>}
       <Field label="Cambiar estado"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>{Object.entries(ESTADOS_P).map(([k,v])=><button key={k} onClick={()=>changeEstado(detail.id as string,k)} style={{border:`1px solid ${v.color}55`,borderRadius:8,padding:"8px 6px",background:detail.estado===k?v.color+"22":"transparent",color:v.color,fontSize:12,fontWeight:700,cursor:"pointer"}}>{v.label}</button>)}</div></Field>
       <div style={{display:"flex",gap:8,marginTop:8}}>
         <button onClick={()=>openEdit(detail)} style={{...S.btnGhost,flex:1}}>✏️ Editar</button>
@@ -712,7 +712,7 @@ function PresupuestosTab({onCrearTrabajo}:{onCrearTrabajo:(p:Record<string,unkno
       <Field label="Servicio"><select style={S.select} value={form.servicio as string} onChange={e=>setForm({...form,servicio:e.target.value})}>{SERVICIOS.map(s=><option key={s}>{s}</option>)}</select></Field>
       <ItemsEditor items={items} onChange={setItems}/>
       <Toggle active={!!form.tiene_iva} onChange={()=>setForm({...form,tiene_iva:!form.tiene_iva})} label="Aplicar IVA 21%"/>
-      {form.tiene_iva&&items.length>0&&(()=>{const sub=calcTotalItems(items);const iv=sub*IVA;return <div style={{background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:"#7AA0D4",fontSize:13}}>IVA 21%</span><span style={{color:"#EEF2FF",fontSize:13}}>{iv.toFixed(2)}€</span></div><div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid #1A3A7A",paddingTop:6}}><span style={{color:"#EEF2FF",fontSize:14,fontWeight:700}}>Total</span><span style={{color:ACCENT,fontSize:16,fontWeight:800}}>{(sub+iv).toFixed(2)}€</span></div></div>;})()} 
+      {!!form.tiene_iva&&items.length>0&&(()=>{const sub=calcTotalItems(items);const iv=sub*IVA;return <div style={{background:"#0D2259",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #1A3A7A"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{color:"#7AA0D4",fontSize:13}}>IVA 21%</span><span style={{color:"#EEF2FF",fontSize:13}}>{iv.toFixed(2)}€</span></div><div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid #1A3A7A",paddingTop:6}}><span style={{color:"#EEF2FF",fontSize:14,fontWeight:700}}>Total</span><span style={{color:ACCENT,fontSize:16,fontWeight:800}}>{(sub+iv).toFixed(2)}€</span></div></div>;})()} 
       <Field label="Estado"><select style={S.select} value={form.estado as string} onChange={e=>setForm({...form,estado:e.target.value})}>{Object.entries(ESTADOS_P).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></Field>
       <Field label="Fecha"><input style={S.input} type="date" value={form.fecha as string} onChange={e=>setForm({...form,fecha:e.target.value})}/></Field>
       <Field label="Nota"><textarea style={{...S.input,minHeight:70,resize:"vertical"}} value={form.nota as string} onChange={e=>setForm({...form,nota:e.target.value})} placeholder="Observaciones adicionales..."/></Field>
@@ -758,7 +758,7 @@ function MaterialesTab() {
         <div key={m.id as string} style={{background:"#0A1F4E",border:`1px solid ${m.urgente&&!m.comprado?"#DC262640":"#1A3A7A"}`,borderRadius:14,padding:14,display:"flex",alignItems:"center",gap:12}}>
           <button onClick={()=>toggle(m.id as string,"comprado")} style={{width:28,height:28,borderRadius:"50%",border:`2px solid ${m.comprado?"#059669":"#1A3A7A"}`,background:m.comprado?"#059669":"transparent",cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"#fff"}}>{m.comprado?"✓":""}</button>
           <div style={{flex:1,minWidth:0}}>
-            {m.urgente&&!m.comprado&&<div style={{fontSize:10,color:"#DC2626",fontWeight:700,letterSpacing:0.5,marginBottom:2}}>⚡ URGENTE</div>}
+            {!!m.urgente&&!m.comprado&&<div style={{fontSize:10,color:"#DC2626",fontWeight:700,letterSpacing:0.5,marginBottom:2}}>⚡ URGENTE</div>}
             <div style={{fontWeight:700,fontSize:15,color:m.comprado?"#3A5A9A":"#EEF2FF",textDecoration:m.comprado?"line-through":"none"}}>{m.item as string}</div>
             <div style={{fontSize:13,color:"#4A6A9A"}}>{m.cantidad as string}{m.nota?` · ${m.nota as string}`:""}</div>
           </div>
@@ -850,7 +850,8 @@ function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Recor
   // en Bizum, donde no aplica.
   const elegirMetodo=(k:string)=>{setMetodo(k);setTieneIva(IVA_POR_DEFECTO[k]);};
   const importeValido=Number(importe)>0;
-  return <Modal title="Completar trabajo" onClose={onClose} zIndex={200}>
+  const yaCompletado=trabajo.estado==="completado";
+  return <Modal title={yaCompletado?"Editar pago":"Completar trabajo"} onClose={onClose} zIndex={200}>
     <Field label="Importe (€)"><input style={S.input} type="number" value={importe} onChange={e=>setImporte(e.target.value)} placeholder="0" autoFocus/></Field>
     <Field label="¿Cómo pagó el cliente?">
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
@@ -860,7 +861,7 @@ function CompletarTrabajoModal({trabajo,saving,onConfirm,onClose}:{trabajo:Recor
     {metodo==="bizum"
       ? <div style={{background:"#0D2259",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #1A3A7A",fontSize:13,color:"#7AA0D4"}}>Bizum no lleva IVA</div>
       : <Toggle active={tieneIva} onChange={()=>setTieneIva(v=>!v)} label="Aplicar IVA 21%"/>}
-    <button onClick={()=>onConfirm(metodo,tieneIva,importe)} disabled={!metodo||!importeValido||saving} style={{...S.btnPrim,opacity:(!metodo||!importeValido||saving)?0.6:1}}>{saving?"Guardando...":"✓ Marcar como completado"}</button>
+    <button onClick={()=>onConfirm(metodo,tieneIva,importe)} disabled={!metodo||!importeValido||saving} style={{...S.btnPrim,opacity:(!metodo||!importeValido||saving)?0.6:1}}>{saving?"Guardando...":yaCompletado?"✓ Guardar pago":"✓ Marcar como completado"}</button>
   </Modal>;
 }
 
@@ -967,6 +968,7 @@ function TrabajosTab({precargar}:{precargar:Record<string,unknown>|null}) {
     {detail&&<Modal title="Trabajo" onClose={()=>setDetail(null)}>
       <DetalleTrabajo t={detail}/>
       <EstadoSelector estado={detail.estado as string} onChange={k=>k==="completado"?setCompletar(detail):changeEstado(detail.id as string,k)}/>
+      {detail.estado==="completado"&&<button onClick={()=>setCompletar(detail)} style={{...S.btnGhost,width:"100%",marginTop:8}}>💳 Cambiar método de pago / importe</button>}
       <div style={{display:"flex",gap:8,marginTop:8}}>
         <button onClick={()=>openEdit(detail)} style={{...S.btnGhost,flex:1}}>✏️ Editar</button>
         <button onClick={()=>abrirFactura(detail)} style={{...S.btnGhost,flex:1}}>🧾 Factura</button>
@@ -1165,6 +1167,7 @@ function AgendaTab() {
   const detailModal = detail && <Modal title="Trabajo" onClose={() => setDetail(null)}>
     <DetalleTrabajo t={detail} />
     <EstadoSelector estado={detail.estado as string} onChange={k => k === "completado" ? setCompletar(detail) : changeEstado(detail.id as string, k)} />
+    {detail.estado === "completado" && <button onClick={() => setCompletar(detail)} style={{ ...S.btnGhost, width: "100%", marginTop: 8 }}>💳 Cambiar método de pago / importe</button>}
     <button onClick={() => openForm(detail)} style={{ ...S.btnGhost, width: "100%", marginTop: 8 }}>✏️ Editar trabajo</button>
   </Modal>;
   const completarModal = completar && <CompletarTrabajoModal trabajo={completar} saving={savingCompletar} onConfirm={confirmCompletar} onClose={() => setCompletar(null)} />;
